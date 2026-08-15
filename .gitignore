@@ -9,3 +9,7 @@ generated/
 .DS_Store
 .turbo/
 coverage/
+
+# Reabre as portas para dev local. NUNCA versionar: o Coolify aplicaria no deploy
+# e reabriria tudo em producao.
+docker-compose.override.yml

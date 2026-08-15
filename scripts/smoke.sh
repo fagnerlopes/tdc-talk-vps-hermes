@@ -2,10 +2,19 @@
 # Smoke test ponta a ponta. Cada checagem mapeia uma secao do CHECKLIST-PRE-LIVE.md.
 #
 # Uso:
-#   ./scripts/smoke.sh                      # localhost
-#   API_URL=https://api.exemplo.com \
-#   WEB_URL=https://exemplo.com \
-#   LOKI_URL=https://loki.exemplo.com ./scripts/smoke.sh
+#   ./scripts/smoke.sh          # localhost (precisa do docker-compose.override.yml)
+#
+#   API_URL=https://api.hostmaster.fagnerlopes.dev \
+#   WEB_URL=https://hostmaster.fagnerlopes.dev \
+#   LOKI_URL=https://loki.hostmaster.fagnerlopes.dev \
+#   GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
+#   LOKI_USER=hermes LOKI_PASS='...' \
+#   ADMIN_EMAIL='...' ADMIN_PASSWORD='...' ./scripts/smoke.sh
+#
+# LOKI_USER/LOKI_PASS: em producao o Loki fica atras do proxy loki-auth. Sem eles
+#   as secoes 6 a 9 respondem 401 e a talk "cai" pelo motivo errado.
+# ADMIN_EMAIL/ADMIN_PASSWORD: sem eles as checagens de login sao PULADAS.
+# PROMTAIL_URL: nao ha dominio para o Promtail. Deixe em branco contra a VPS.
 #
 # O criterio de sucesso desta demo NAO e "o app funciona". E: as queries LogQL
 # do AGENTE.md retornam dados. Por isso as checagens do Loki sao as criticas.
@@ -15,20 +24,40 @@ set -uo pipefail
 API_URL="${API_URL:-http://localhost:3001}"
 WEB_URL="${WEB_URL:-http://localhost:3000}"
 LOKI_URL="${LOKI_URL:-http://localhost:3100}"
-PROMTAIL_URL="${PROMTAIL_URL:-http://localhost:9080}"
+# Sem dominio e sem porta publicada, o Promtail nao e alcancavel de fora.
+# Default VAZIO de proposito: manter localhost:9080 aqui so produziria
+# falso negativo contra a VPS.
+PROMTAIL_URL="${PROMTAIL_URL:-}"
 GRAFANA_URL="${GRAFANA_URL:-http://localhost:3300}"
+LOKI_USER="${LOKI_USER:-}"
+LOKI_PASS="${LOKI_PASS:-}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+
+# Em producao o Loki esta atras de basic-auth (servico loki-auth). Array vazio
+# quando nao ha credencial, para o -u nao virar argumento solto.
+#
+# Expanda SEMPRE com ${loki_auth[@]+"${loki_auth[@]}"}, nunca com "${loki_auth[@]}":
+# sob `set -u` a segunda forma quebra em array vazio no bash < 4.4, e nao da para
+# assumir paridade de versao entre o laptop e a VPS.
+loki_auth=()
+if [ -n "$LOKI_USER" ]; then
+  loki_auth=(-u "${LOKI_USER}:${LOKI_PASS}")
+fi
 
 PASS=0
 FAIL=0
+SKIP=0
 
 ok()   { printf '  \033[32mOK\033[0m   %s\n' "$1"; PASS=$((PASS + 1)); }
 bad()  { printf '  \033[31mFALHA\033[0m %s\n' "$1"; FAIL=$((FAIL + 1)); }
+skip() { printf '  \033[33mPULADO\033[0m %s\n' "$1"; SKIP=$((SKIP + 1)); }
 head_() { printf '\n\033[1m%s\033[0m\n' "$1"; }
 
 # LogQL precisa de --data-urlencode: `-d` puro nao faz URL-encode e os
 # caracteres | { } " e espaco geram HTTP 400 no Loki.
 loki_query() {
-  curl -sG "${LOKI_URL}/loki/api/v1/query_range" \
+  curl -sG ${loki_auth[@]+"${loki_auth[@]}"} "${LOKI_URL}/loki/api/v1/query_range" \
     --data-urlencode "query=$1" \
     --data-urlencode "limit=${2:-100}" \
     --data-urlencode "start=$(date -u -d '15 minutes ago' +%s)000000000" \
@@ -45,10 +74,10 @@ head_ "1. Stack de pe"
 # versao entre o laptop e a VPS.
 if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
   running=$(docker compose ps --services --filter status=running 2>/dev/null | grep -c .)
-  if [ "$running" -ge 6 ]; then
+  if [ "$running" -ge 7 ]; then
     ok "$running servicos rodando"
   else
-    bad "so $running servicos rodando (esperado 6)"
+    bad "so $running servicos rodando (esperado 7: postgres api web loki loki-auth promtail grafana)"
   fi
 else
   ok "sem docker-compose.yml local — assumindo host remoto, pulando"
@@ -98,9 +127,19 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/v1/health")
 [ "$code" = "200" ] && ok "apos reset, health = 200" || bad "apos reset, health = $code"
 
 head_ "6. Promtail e Loki"
-[ "$(curl -s "${PROMTAIL_URL}/ready")" = "Ready" ] && ok "promtail /ready" || bad "promtail nao esta Ready"
+# O Promtail nao tem dominio: com as portas fechadas, /ready so e alcancavel de
+# dentro do host. Tres tentativas, em ordem de disponibilidade. Pular em silencio
+# seria pior que nao checar — por isso o estado PULADO aparece no resultado.
+if [ -n "$PROMTAIL_URL" ] && [ "$(curl -s -m 5 "${PROMTAIL_URL}/ready" 2>/dev/null)" = "Ready" ]; then
+  ok "promtail /ready (via PROMTAIL_URL)"
+elif [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1 \
+     && docker compose exec -T promtail wget -qO- localhost:9080/ready 2>/dev/null | grep -q Ready; then
+  ok "promtail /ready (via docker compose exec)"
+else
+  skip "promtail /ready — sem acesso externo nem ao host; na VPS rode: docker compose exec promtail wget -qO- localhost:9080/ready"
+fi
 
-labels=$(curl -s "${LOKI_URL}/loki/api/v1/label/job/values" | jq -r '.data[]?' | tr '\n' ' ')
+labels=$(curl -s ${loki_auth[@]+"${loki_auth[@]}"} "${LOKI_URL}/loki/api/v1/label/job/values" | jq -r '.data[]?' | tr '\n' ' ')
 echo "$labels" | grep -q 'api' && ok "Loki conhece o label job=api" || bad "Loki nao tem job=api (labels: ${labels:-nenhum})"
 
 head_ "7. GATE CRITICO — queries do AGENTE.md"
@@ -119,7 +158,7 @@ n=$(loki_lines '{job="api"} | json | endpoint="/v2/checkout" | level="error"')
 n=$(loki_lines '{job="api"} | json | endpoint="/v2/checkout" | productId="MONITOR-240HZ" | level="error"')
 [ "$n" -gt 0 ] && ok "filtro por productId=MONITOR-240HZ -> $n linhas" || bad "filtro por productId -> 0 linhas"
 
-series=$(curl -sG "${LOKI_URL}/loki/api/v1/query_range" \
+series=$(curl -sG ${loki_auth[@]+"${loki_auth[@]}"} "${LOKI_URL}/loki/api/v1/query_range" \
   --data-urlencode 'query=count_over_time({job="api"} | json | endpoint="/v2/checkout" | level="error" [1m])' \
   --data-urlencode "start=$(date -u -d '15 minutes ago' +%s)000000000" \
   --data-urlencode "end=$(date -u +%s)000000000" \
@@ -153,5 +192,5 @@ ds=$(curl -s "${GRAFANA_URL}/api/datasources" | jq -r '.[0].type' 2>/dev/null)
 [ "$ds" = "loki" ] && ok "datasource Loki provisionado" || bad "datasource Loki ausente (got: ${ds:-nada})"
 
 head_ "Resultado"
-printf '  %d passaram, %d falharam\n\n' "$PASS" "$FAIL"
+printf '  %d passaram, %d falharam, %d pulados\n\n' "$PASS" "$FAIL" "$SKIP"
 [ "$FAIL" -eq 0 ] || exit 1

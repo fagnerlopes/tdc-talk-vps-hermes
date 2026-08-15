@@ -3,6 +3,19 @@
 # `app_logs` e o volume que liga API e Promtail. Esse era o ponto exato onde o
 # compose da spec original falhava: o Promtail nao tinha acesso a log nenhum.
 
+# NENHUM servico publica porta no host. Todo acesso externo passa SO pelo Traefik
+# do Coolify, nos dominios *.hostmaster.fagnerlopes.dev (campo
+# docker_compose_domains da aplicacao). E isso que fecha o Postgres (dev_user /
+# dev123 estao neste repositorio publico) e o push anonimo no Loki.
+#
+# NAO tente fechar com `ufw deny`: o Docker publica porta inserindo regra de DNAT
+# na chain DOCKER, avaliada ANTES das regras do ufw na chain filter. Um
+# `ufw deny 5432/tcp` num servico com `ports:` deixa a porta aberta e ainda da a
+# falsa sensacao de ter fechado.
+#
+# Para desenvolver localmente sem Traefik, use docker-compose.override.yml
+# (gitignored) reintroduzindo os `ports:` que voce precisar.
+
 services:
   postgres:
     image: postgres:16
@@ -11,8 +24,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-dev_user}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev123}
       POSTGRES_DB: ${POSTGRES_DB:-hermes_demo}
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -26,8 +37,6 @@ services:
       context: .
       dockerfile: apps/api/Dockerfile
     restart: unless-stopped
-    ports:
-      - "3001:3001"
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,8 +56,6 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
-    ports:
-      - "3000:3000"
     depends_on:
       - api
     environment:
@@ -65,11 +72,10 @@ services:
       dockerfile: Dockerfile.loki
     restart: unless-stopped
     command: -config.file=/etc/loki/local-config.yaml
-    ports:
-      - "3100:3100"
     volumes:
       # volume NOMEADO, nao bind mount — ver comentario em loki-config.yaml
       - loki_data:/loki
+
   # Basic-auth para quem vem DE FORA. O dominio publico
   # loki.hostmaster.fagnerlopes.dev aponta para ESTE servico, nao para o loki.
   #
@@ -105,8 +111,6 @@ services:
       dockerfile: Dockerfile.promtail
     restart: unless-stopped
     command: -config.file=/etc/promtail/config.yml
-    ports:
-      - "9080:9080"
     depends_on:
       - loki
     volumes:
@@ -118,8 +122,6 @@ services:
       context: ./monitoring
       dockerfile: Dockerfile.grafana
     restart: unless-stopped
-    ports:
-      - "3300:3000"
     depends_on:
       - loki
     environment:
