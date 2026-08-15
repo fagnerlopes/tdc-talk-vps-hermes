@@ -48,3 +48,31 @@ model Order {
   @@index([status])
   @@map("orders")
 }
+
+// Tabela SEPARADA dos clientes da loja, de proposito. O model User guarda
+// gamer-pro@example.com e tech-enthusiast@test.com, esta documentado no
+// AGENTE.md e tem FK dos orders — o Hermes pode consulta-lo. Credencial de
+// admin ali poluiria a superficie de investigacao.
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  createdAt    DateTime  @default(now())
+  lastLoginAt  DateTime?
+  sessions     Session[]
+
+  @@map("admin_users")
+}
+
+model Session {
+  id        String   @id // 32 bytes aleatorios em hex — e o valor do cookie
+  userId    String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  user AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("sessions")
+}
