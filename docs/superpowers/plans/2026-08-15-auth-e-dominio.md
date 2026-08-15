@@ -12,6 +12,44 @@
 
 ---
 
+## ⚠️ Estado: EXECUTADO — o que mudou em relação a este plano
+
+Tudo abaixo está no ar e verificado. **Três coisas saíram diferentes do planejado**, e
+quem reler este documento precisa saber antes de seguir os passos ao pé da letra.
+
+**1. O basic-auth do Loki não é um middleware do Traefik.** É um serviço novo,
+`loki-auth` (nginx), e o domínio `loki.hostmaster.fagnerlopes.dev` aponta para ele.
+Motivo: o Coolify **escapa** `${VAR}` para `$${VAR}` em `labels:` (ele substitui em
+`environment:`, mas não em `labels:`). O middleware recebia a string literal como
+lista de usuários, o Traefik invalidava o roteador, e tudo virava **503 `no available
+server`**. Como o repositório é público, o hash não podia ir literal no label. Toda a
+Task 2 deste plano descreve o caminho que **não** funcionou — o que vale é
+`monitoring/loki-auth.conf` e a seção "Proteção do Loki" do [DEPLOY.md](../../../DEPLOY.md).
+
+**2. A credencial vai em base64 (`LOKI_BASIC_AUTH_B64`), não em texto.** O `$` do hash
+apr1 não sobrevive à interpolação do Compose — nem cru, nem escapado com `$$`. Os dois
+jeitos corrompem o hash de formas diferentes. Base64 atravessa intacto.
+
+**3. `docker_compose_domains` exige um campo `name`** repetindo a chave do serviço, e
+**um serviço novo só aceita domínio depois de ter sido deployado uma vez** — o Coolify
+descarta em silêncio a chave que não reconhece, respondendo `{"uuid":"..."}` como se
+tivesse funcionado.
+
+Duas correções menores feitas durante a execução:
+
+- A faixa de tolerância da taxa de falha no `smoke.sh` passou de 3-7 para **2-8**. O
+  `CHECKOUT_MAX_SUCCESS_STREAK=3` empurra a taxa real para ~53%, e a faixa antiga
+  disparava falso alarme em ~7% das execuções.
+- As checagens que usam `docker compose` agora são **puladas quando o alvo é remoto**.
+  Antes, rodar contra a VPS a partir do repositório com uma stack local de pé fazia
+  elas passarem olhando para os containers errados.
+
+E uma ação de segurança não prevista: a credencial do Loki foi **rotacionada** ao fim,
+porque um fragmento real do hash (salt + início) chegou a ser commitado num comentário
+de documentação, num repositório público.
+
+---
+
 ## Global Constraints
 
 Copiadas literalmente da seção "Restrições invioláveis" da spec. Valem para **toda** task deste plano.
