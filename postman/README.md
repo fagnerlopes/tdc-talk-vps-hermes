@@ -9,8 +9,8 @@ No Postman, **Import** → arraste os quatro arquivos desta pasta. Depois **sele
 | Environment | Quando usar |
 |---|---|
 | `HOSTMASTER — Local (docker compose)` | stack rodando na sua máquina |
-| `HOSTMASTER — VPS (portas cruas)` | produção hoje |
-| `HOSTMASTER — VPS (dominios TLS)` | produção depois que os domínios entrarem no Coolify |
+| `HOSTMASTER — VPS (portas cruas)` | **obsoleto** — as portas foram fechadas; mantido só como histórico |
+| `HOSTMASTER — VPS (dominios TLS)` | **produção** — é este que você quer |
 
 ## Pastas
 
@@ -38,7 +38,15 @@ Os controles de demo moram no `/dashboard`, atrás de login. Se a sessão falhar
 
 **A janela das queries é de 60 minutos.** Erros mais antigos que isso não aparecem, e é esperado.
 
-**Nada aqui autentica na API.** A API e o Loki continuam abertos para o Hermes, por design. O login protege apenas o dashboard do Next. Quando o basic-auth do Loki entrar, basta preencher `loki_user` e `loki_pass` no Environment — a pasta 4 já está configurada para usá-los.
+**Nada aqui autentica na API.** A API continua aberta para o Hermes, por design. O login protege apenas o dashboard do Next.
+
+**O Loki, esse sim, autentica.** Preencha `loki_user` e `loki_pass` no Environment de produção — a pasta 4 inteira e o `/ready` da pasta 5 já estão configurados para usá-los. Sem isso, essas requests devolvem 401. Pela linha de comando, passe a senha sem gravá-la no arquivo:
+
+```bash
+npx newman@6 run postman/HOSTMASTER-TDC.postman_collection.json \
+  -e postman/HOSTMASTER-vps-tls.postman_environment.json \
+  --env-var "loki_pass=$LOKI_PASS"
+```
 
 ## Rodar pela linha de comando
 

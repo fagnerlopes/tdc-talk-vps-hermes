@@ -1,6 +1,6 @@
 # Deploy no Coolify
 
-**Status: no ar.** Deploy `tcxbdswnjdftburh9ym1y7iy` concluído, smoke test 23/23 contra a VPS.
+**Status: no ar, com TLS e sem portas cruas.** Smoke test sem falhas contra os domínios.
 
 | | |
 |---|---|
@@ -181,36 +181,60 @@ curl -sG -u "hermes:$SENHA" "$LOKI/loki/api/v1/label/job/values" | jq -c '.data'
 
 O marcador `teste-de-exposicao`, deixado pelo push anônimo original, saiu da janela padrão de consulta de labels e não aparece mais. Isso é esperado.
 
-### As outras portas abertas
+## Portas — todas fechadas
 
-O Coolify publicou as seis portas do compose no host. Além da 3100:
-
-| Porta | Serviço | Risco |
-|---|---|---|
-| `5432` | Postgres | **aberta com `dev_user`/`dev123`**, credenciais que estão neste repositório público. Dá para apagar a tabela `products` no meio da demo. Feche junto com a 3100 — nada externo precisa dela. |
-| `9080` | Promtail | só expõe `/ready` e métricas. Baixo risco, mas o smoke test é o único consumidor externo. |
-| `3300` | Grafana | anônimo com papel Admin, por design (abrir no Explore sem login no palco). Quem achar consegue mexer nos dashboards. |
-| `3000` / `3001` | Web e API | precisam ser públicas — são o palco e o canal do Hermes. |
+Nenhum serviço publica porta no host. O `docker-compose.yml` não tem um único bloco `ports:`; todo acesso externo entra pelo Traefik nas 80/443 e é roteado por domínio.
 
 ```bash
-# na VPS do Coolify, como root — fecha o que não precisa ser público
-ufw deny 5432/tcp
-ufw deny 9080/tcp
+for p in 3000 3001 3100 3300 9080 5432; do
+  printf '%-6s ' "$p"
+  timeout 5 bash -c "</dev/tcp/177.153.35.27/$p" 2>/dev/null && echo ABERTA || echo fechada
+done
+# esperado: as seis fechadas
 ```
+
+Isso é o que resolveu, de uma vez, os dois riscos que estavam abertos:
+
+| Porta | Serviço | Risco que existia |
+|---|---|---|
+| `5432` | Postgres | aceitava conexão com `dev_user`/`dev123` — credenciais **deste repositório público**. Dava para apagar a tabela `products` no meio da demo. |
+| `3100` | Loki | leitura e escrita anônimas. Escrever era o pior: dava para injetar linhas em `job="api"` e envenenar a investigação ao vivo. |
+| `9080` | Promtail | expunha `/ready` e métricas. Risco baixo, mas nada externo precisa dele. |
+| `3300` | Grafana | anônimo com papel Admin, por design. Quem achasse mexia nos dashboards. |
+| `3000` / `3001` | Web e API | continuam públicas — agora por domínio e TLS, não por porta crua. |
+
+### `ufw` não fecha porta publicada pelo Docker
+
+O design original previa `ufw deny`. **Não funciona.** O Docker publica porta inserindo regra de DNAT na chain `DOCKER`, avaliada **antes** das regras do `ufw` na chain `filter`. Um `ufw deny 5432/tcp` num serviço com `ports: - "5432:5432"` deixa a porta aberta **e ainda dá a falsa sensação de ter fechado** — é a causa clássica de "fechei no firewall e continua acessível".
+
+O fecho de verdade é remover o `ports:`: declarativo, versionado e reaplicado a cada deploy, sem depender de acesso SSH ao host.
+
+### Desenvolvimento local
+
+Sem `ports:`, `docker compose up` local perde acesso a tudo. Para isso existe o `docker-compose.override.yml`, que reintroduz as portas e está no `.gitignore`:
+
+```bash
+git check-ignore -v docker-compose.override.yml   # tem que casar com uma regra
+```
+
+**Se esse arquivo chegar ao repositório, o Coolify o aplica no deploy e reabre tudo.** É o único jeito de essa mudança regredir em silêncio.
+
+O `loki-auth` sobe local em `3101` (o `3100` fica com o Loki cru), então o smoke test local roda com `LOKI_URL=http://localhost:3101` para exercitar o mesmo caminho autenticado da produção.
 
 ## Depois do deploy
 
 1. ✅ Smoke test do laptop contra as URLs públicas — **23/23**:
    ```bash
-   API_URL=http://vps70013.publiccloud.com.br:3001 WEB_URL=http://vps70013.publiccloud.com.br:3000 \
-   LOKI_URL=http://vps70013.publiccloud.com.br:3100 PROMTAIL_URL=http://vps70013.publiccloud.com.br:9080 \
-   GRAFANA_URL=http://vps70013.publiccloud.com.br:3300 ./scripts/smoke.sh
+   API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
+   LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
+   LOKI_USER=hermes LOKI_PASS='<senha>' ./scripts/smoke.sh
    ```
+   Esperado: `0 falharam`. O `1 pulado` é o Promtail, que não tem domínio — é esperado.
 2. ✅ [AGENTE.md](AGENTE.md), [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) e [CHECKLIST-PRE-LIVE.md](CHECKLIST-PRE-LIVE.md) com as URLs públicas reais
-3. ⬜ **Fechar a porta 3100** — ver a seção do R4 acima. Pendente e urgente.
+3. ✅ **Portas cruas fechadas** e Loki atrás de basic-auth — ver as duas seções acima
 4. ⬜ Baseline antes da live:
    ```bash
-   API_URL=http://vps70013.publiccloud.com.br:3001 ./scripts/reset-demo.sh
+   API_URL=https://api.hostmaster.fagnerlopes.dev ./scripts/reset-demo.sh
    ```
 
 ## Riscos conhecidos no ambiente do Coolify
