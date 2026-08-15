@@ -1,211 +1,187 @@
-# **TDC Demo: E-commerce + Hermes Agent**
+# TDC Demo: E-commerce HOSTMASTER + Hermes Agent
 
-Demo ao vivo para o TDC (The Developer's Conference) mostrando como um Agente IA (Hermes) monitora e resolve problemas em produção via **observabilidade agnóstica**.
+Demo ao vivo para o TDC mostrando um agente de IA (Hermes) descobrindo e diagnosticando erros de produção via **observabilidade agnóstica** — consultando Loki, sem nenhum alerta hardcoded na aplicação.
 
-## **O Que é Esta Demo?**
+O critério de sucesso desta demo não é "o app funciona". É: **as queries LogQL do [AGENTE.md](AGENTE.md) retornam dados**. Todo o resto existe para sustentar isso.
 
-Uma aplicação de e-commerce simples (freelancers) que:
-- Simula falhas aleatórias em checkouts
-- Loga tudo estruturado no Loki
-- Hermes Agent monitora logs e avisa no Telegram
-- Demonstra observabilidade em tempo real durante a live
+**Duração:** 20 minutos · **Stack:** Next.js · Fastify · Prisma/Postgres · Promtail · Loki · Grafana
 
-**Duração:** 20 minutos  
-**Data:** Segunda-feira, 19h (live ao vivo)  
-**Stack:** Next.js + Node.js + Postgres + Loki + Hermes Agent
-
-## **Estrutura do Projeto**
+## Como funciona
 
 ```
-.
-├── apps/
-│   ├── web/              # Frontend Next.js (Dashboard HOSTMASTER)
-│   └── api/              # Backend Node.js + Fastify (Endpoints /v1, /v2)
-├── packages/
-│   └── database/         # Prisma ORM + Seed
-├── monitoring/           # Config Promtail + Loki
-├── docker-compose.yml    # Stack completo
-├── PRD.md               # Product Requirements
-├── CLAUDE.md            # Diretrizes de implementação
-├── AGENTE.md            # Instruções para Hermes
-└── README.md            # Este arquivo
+Browser  ──POST /api/proxy/v2/checkout──▶  Next (proxy runtime)  ──▶  Fastify API
+                                                                          │
+                                                        JSON do Pino ─────┤
+                                                                          ▼
+                                                          volume app_logs (/var/log/app/api.log)
+                                                                          │
+                                                                     Promtail (tail)
+                                                                          │
+                                                                          ▼
+                                                        Loki  ◀── Hermes consulta via LogQL
+                                                          ▲
+                                                       Grafana (Explore)
 ```
 
-## **Quick Start**
+O ponto que costuma quebrar em setups assim é a ponte entre a aplicação e o coletor. Aqui ela é explícita: um **volume compartilhado** (`app_logs`) entre `api` e `promtail`. Sem socket do Docker (permissão frágil no Coolify), sem log driver plugin.
 
-### **1. Deploy no Coolify (segunda 18h)**
+## Subir a stack
 
 ```bash
-# Clone este repositório
-git clone <repo-url>
-cd tdc-talk-vps-hermes
-
-# Deploy via Coolify
-# (Instruções específicas dependem da configuração da VPS)
+cp .env.example .env        # opcional: os defaults do compose já funcionam
+docker compose up -d
 ```
 
-### **2. Inicializar Stack**
+Levar ~30s. O container da API roda `prisma migrate deploy` e o seed idempotente no start (`SEED_ON_BOOT=true`), então **não é preciso rodar seed na mão**.
+
+| Serviço | URL local | Para quê |
+|---|---|---|
+| Dashboard HOSTMASTER | http://localhost:3000 | a tela projetada na talk |
+| API | http://localhost:3001 | endpoints `/v1` e `/v2` |
+| Loki | http://localhost:3100 | API de query — é aqui que o Hermes vai |
+| Grafana | http://localhost:3300 | Explore com datasource Loki já provisionado, sem login |
+| Promtail | http://localhost:9080 | `/ready` para liveness |
+| Postgres | localhost:5432 | `dev_user` / `dev123` / `hermes_demo` |
+
+**Loki não tem UI.** `http://localhost:3100/` retorna 404 — isso é normal. Para olhar log com os olhos, use o **Grafana em :3300**. Para liveness do Loki, use `/ready`.
+
+## Verificar que está tudo certo
 
 ```bash
-# Suba os containers
-docker-compose up -d
-
-# Aguarde ~30 segundos para tudo ficar pronto
-
-# Seed do banco
-npm run seed
+./scripts/smoke.sh        # 23 checagens ponta a ponta; sai != 0 se algo falhar
+./scripts/reset-demo.sh   # volta v1 e v2 ao baseline e asserta o resultado
 ```
 
-### **3. Testar Endpoints**
+Contra um host remoto:
 
 ```bash
-# Health check (deve retornar 200)
-curl http://localhost:3001/v2/health
-
-# Status da aplicação
-curl http://localhost:3001/v2/status
-
-# Fazer uma compra (50% de chance de falhar)
-curl -X POST http://localhost:3001/v2/checkout \
-  -H "Content-Type: application/json" \
-  -d '{"productId": "TEMPLATE-NEXTJS", "userId": "user-1"}'
+API_URL=https://<dominio>:3001 WEB_URL=https://<dominio> \
+LOKI_URL=https://<dominio>:3100 ./scripts/smoke.sh
 ```
 
-### **4. Verificar Logs no Loki**
+## Endpoints
+
+`/v1` é o ensaio das 18h; `/v2` é a live das 19h. **O estado é isolado por versão** — testar em `/v1` não move os contadores de `/v2`.
+
+| Rota | Comportamento |
+|---|---|
+| `GET /vN/health` | `200 {status:"ok"}` · `500 {error:"crashed"}` se em crash |
+| `GET /vN/status` | `uptime`, `checkouts`, `failures`, `failureRate`, `observedFailureRate`, `crashed` |
+| `GET /vN/products` | catálogo (banco, com fallback estático) |
+| `GET /vN/logs?limit=10` | ring buffer em memória que alimenta o painel do dashboard |
+| `POST /vN/checkout` | `{productId, userId?, forceFailure?}` — falha ~50% e loga erro estruturado |
+| `POST /vN/simulate-crash` | alterna o estado, retorna `{crashed}` |
+| `POST /vN/config` | `{failureRate?, maxSuccessStreak?, forceNextOutcome?, reset?}` |
+
+### Controles de determinismo
+
+Existem porque 6 sucessos seguidos têm ~1,6% de chance — improvável, mas uma eternidade no palco.
+
+| Controle | Default | Uso |
+|---|---|---|
+| `CHECKOUT_FAILURE_RATE` | `0.5` | baseline |
+| `CHECKOUT_MAX_SUCCESS_STREAK` | `3` | após 3 sucessos seguidos, o 4º clique **sempre** falha |
+| `POST /vN/config {failureRate}` | — | `1.0` no smoke, `0.5` antes da live |
+| `POST /vN/config {forceNextOutcome:"fail"}` | — | botão de pânico: garante que o próximo clique falha |
+| `forceFailure` no body do checkout | — | falha via curl sem mexer no estado global |
+
+**O caminho forçado produz uma linha de log byte-idêntica à falha natural** — não existe campo `forced`. A investigação do Hermes no palco é genuína.
+
+## Consultar os logs
+
+Sempre com `--data-urlencode`. Um `-d 'query=...'` puro **não** faz URL-encode, e os caracteres `|`, `{`, `}`, `"` e espaço geram HTTP 400 no Loki:
 
 ```bash
-# Acessar Loki UI
-open http://localhost:3100
-
-# Ou fazer query via API
-curl -G \
-  -d 'query={job="api"} | json' \
-  -d 'limit=100' \
-  http://localhost:3100/loki/api/v1/query_range | jq '.data.result'
+curl -sG http://localhost:3100/loki/api/v1/query_range \
+  --data-urlencode 'query={job="api"} | json | level="error"' \
+  --data-urlencode 'limit=20' | jq '.data.result'
 ```
 
-## **Durante a Live**
+O stream tem **um label só**: `job="api"`. Nada de `level` ou `endpoint` como label — promovê-los faria o Loki renomear as chaves extraídas para `level_extracted` e **quebraria silenciosamente** a query acima. Todo filtro acontece em tempo de query, depois do `| json`.
 
-### **Ato 1: Simular Falha (T+5)**
-```
-1. Dev compartilha tela mostrando o dashboard
-2. Clica em "Comprar Produto" algumas vezes
-3. Uma das requisições retorna 500
-4. Log estruturado chega em Loki
-```
-
-### **Ato 2: Descoberta via Hermes (T+8)**
-```
-1. Dev envia áudio: "Hermes, procure erros 500 no checkout"
-2. Hermes consulta Loki API
-3. Hermes identifica o erro e avisa Telegram
-4. Mostra contexto (timestamp, produto, motivo)
-```
-
-### **Ato 3: Monitoramento Autônomo (T+15)**
-```
-1. Dev pede: "Crie um cron para monitorar"
-2. Hermes cria cron job que roda a cada 1 minuto
-3. Hermes simula novo erro (clica novamente)
-4. Cron descobre → avisa Telegram automaticamente
-```
-
-## **Documentação**
-
-| Arquivo | Descrição |
-|---------|-----------|
-| [PRD.md](PRD.md) | Requisitos e visão arquitetural |
-| [CLAUDE.md](CLAUDE.md) | Diretrizes de implementação |
-| [AGENTE.md](AGENTE.md) | Instruções para o Hermes Agent |
-| [README.md](README.md) | Este arquivo |
-
-## **Endpoints Disponíveis**
-
-### **Teste Prévio (/v1)**
-- `GET /v1/health` — Status de saúde
-- `GET /v1/status` — Métricas do sistema
-- `POST /v1/checkout` — Simular compra (50% falha)
-- `POST /v1/simulate-crash` — Simular queda
-
-### **Live (/v2)**
-Mesma coisa que /v1, mas isolada para a demonstração ao vivo não interferir no teste prévio.
-
-## **Logs Estruturados**
-
-Todos os logs saem como JSON no stdout:
+## Formato do log
 
 ```json
-{
-  "level": "error",
-  "timestamp": "2026-08-15T19:08:23.456Z",
-  "correlationId": "req-abc-123",
-  "service": "checkout-api",
-  "endpoint": "/v2/checkout",
-  "productId": "TEMPLATE-NEXTJS",
-  "reason": "payment_gateway_timeout",
-  "message": "Falha ao processar pagamento"
-}
+{"level":"error","timestamp":"2026-08-17T22:08:23.456Z","service":"checkout-api","correlationId":"req-a1b2c3d4","endpoint":"/v2/checkout","productId":"MONITOR-240HZ","userId":"user-1","reason":"payment_gateway_timeout","stack":"Error: Payment gateway did not respond within 30000ms\n    at ...","httpStatus":500,"durationMs":1843,"amount":1299,"message":"Falha ao processar pagamento"}
 ```
 
-**O Hermes lê esses logs via Loki API e os interpreta.**
+Cada checkout gera **exatamente 2 linhas** com o mesmo `correlationId`: início (`info`) e desfecho (`info` ou `error`). O `reason` é sorteado com peso: `payment_gateway_timeout` 70% · `payment_processing_failed` 20% · `insufficient_inventory` 10%.
 
-## **Dados Fictícios (Gaming/Informática)**
+O `correlationId` também vai para a tabela `orders`, dando ao Hermes um segundo ângulo: cruzar a linha do Loki com o registro no banco.
 
-**Produtos:**
-- Monitor 240Hz IPS (R$ 1.299,00)
-- Placa de Vídeo RTX 4060 (R$ 1.899,00)
-- Headset Gamer Wireless (R$ 449,00)
-- Teclado Mecânico RGB (R$ 599,00)
-- Mousepad Extra Grande (R$ 149,00)
+## Variáveis de ambiente
 
-**Usuários:**
-- gamer-pro@example.com
-- tech-enthusiast@test.com
+| Variável | Default | Nota |
+|---|---|---|
+| `DATABASE_URL` | `postgresql://dev_user:dev123@postgres:5432/hermes_demo` | |
+| `LOG_FILE` | `/var/log/app/api.log` | o arquivo que o Promtail lê |
+| `LOG_LEVEL` | `info` | |
+| `CHECKOUT_FAILURE_RATE` | `0.5` | |
+| `CHECKOUT_MAX_SUCCESS_STREAK` | `3` | `0` desliga o corte de streak |
+| `SEED_ON_BOOT` | `true` | seed idempotente no start do container |
+| `API_INTERNAL_URL` | `http://api:3001` | lido em **runtime** pelo proxy do Next |
 
-**Nenhuma informação sensível:** Tudo é fictício
+`API_INTERNAL_URL` é resolvido em runtime de propósito. Uma `NEXT_PUBLIC_*` seria inlined em build time, e uma URL errada custaria um rebuild de 3–5 min no dia da talk.
 
-## **Troubleshooting**
+## Estrutura
 
-### **Loki não está recebendo logs**
+```
+apps/api/src/
+├── logger.ts             # o arquivo mais importante: todo campo obrigatório nasce aqui
+├── log-buffer.ts         # ring buffer do painel "Logs recentes"
+├── state.ts              # estado em memória, isolado por versão
+├── checkout.ts           # decisão de falha + catálogo de reasons
+└── routes/demo-routes.ts # factory registrada 2x (v1, v2)
+
+apps/web/
+├── app/api/proxy/[...path]/route.ts   # proxy de runtime para a API
+└── components/                        # Sidebar, TopBar, StatsStrip, ProductGrid, RecentLogsPanel
+
+packages/database/        # Prisma + seed idempotente + catálogo puro (sem import de Prisma)
+monitoring/               # promtail-config.yaml, loki-config.yaml, provisioning do Grafana
+scripts/                  # smoke.sh, reset-demo.sh
+```
+
+## Documentação
+
+| Arquivo | Para quê |
+|---|---|
+| [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) | **script minuto a minuto da live + botões de pânico** |
+| [AGENTE.md](AGENTE.md) | contrato de operação do Hermes (queries LogQL, campos, fluxo) |
+| [CHECKLIST-PRE-LIVE.md](CHECKLIST-PRE-LIVE.md) | validação 1h antes |
+| [DEPLOY.md](DEPLOY.md) | deploy no Coolify |
+| [PRD.md](PRD.md) | requisitos originais |
+| [CLAUDE.md](CLAUDE.md) | diretrizes de implementação |
+
+## Troubleshooting
+
+**Não chega log no Loki**
 ```bash
-# Verificar se Promtail está rodando
-docker-compose logs promtail
-
-# Verificar se API está loggando
-docker-compose logs api
+curl -s localhost:9080/ready                                    # Promtail vivo?
+docker compose exec api tail -3 /var/log/app/api.log            # a API está escrevendo?
+docker compose exec promtail cat /promtail/positions.yaml       # o Promtail achou o arquivo?
+curl -s localhost:3100/loki/api/v1/label/job/values | jq -r '.data[]'   # => api
 ```
 
-### **Endpoint /v2/checkout não existe**
-```bash
-# Verificar se API está rodando
-docker-compose logs api
+**Query LogQL retorna 400** — falta `--data-urlencode`.
 
-# Resetar containers
-docker-compose down
-docker-compose up -d
-npm run seed
-```
+**Nunca rode `docker compose down -v`.** O `-v` apaga `postgres_data` **e** `loki_data`, levando junto todo o histórico que o Hermes iria buscar. `down` sozinho é seguro: a stack volta em ~15s com os dados intactos.
 
-### **Banco de dados vazio**
-```bash
-# Rodar seed manualmente
-npm run seed
-```
+## Status
 
-## **Próximos Passos**
+- [x] Monorepo + workspaces
+- [x] Fastify API com Pino (logs JSON)
+- [x] Endpoints `/v1` e `/v2` completos
+- [x] `POST /checkout` com falha ~50% e erro estruturado
+- [x] Dashboard HOSTMASTER com botão "Comprar" e painel de logs
+- [x] Prisma + migration + seed idempotente
+- [x] docker-compose completo (Postgres, API, Web, Promtail, Loki, Grafana)
+- [x] Queries do AGENTE.md validadas contra o Loki (`scripts/smoke.sh`)
+- [ ] Deploy no Coolify — ver [DEPLOY.md](DEPLOY.md)
+- [ ] Ensaio completo dos 3 atos
 
-1. ✅ Ler [PRD.md](PRD.md) para entender requisitos
-2. ✅ Ler [CLAUDE.md](CLAUDE.md) para diretrizes de código
-3. ✅ Inicializar monorepo (apps/web, apps/api, packages/database)
-4. ✅ Implementar endpoints /v1 e /v2
-5. ✅ Configurar docker-compose completo
-6. ✅ Seed de dados
-7. ✅ Deploy no Coolify (segunda 18h)
-8. ✅ Testes (segunda 18h-19h)
-9. ✅ Live (segunda 19h)
+## Nota de segurança
 
----
+Demo pública e efêmera: sem autenticação, `auth_enabled: false` no Loki, credenciais de banco fixas no compose. Todos os dados são fictícios. **Não reaproveitar esta configuração para nada que não seja esta talk.** Sobre expor o Loki na internet, ver [DEPLOY.md](DEPLOY.md).
 
-**Qualquer dúvida?** Consulte [AGENTE.md](AGENTE.md) para detalhes sobre como Hermes funciona.
-
-**Sucesso na demo! 🚀**
+O `npm audit` reporta 3 vulnerabilidades high transitivas do Next 15 (`postcss`, `sharp`); corrigir exigiria Next 16. Sem impacto para uma demo de uma noite sem upload de imagem nem CSS de terceiros.

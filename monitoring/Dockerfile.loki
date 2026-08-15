@@ -1,0 +1,14 @@
+# Fallback do R3: se o bind mount relativo de ./monitoring/*.yaml falhar no
+# Coolify (a falha de compose mais reportada por lá), troque no docker-compose.yml
+#
+#   image: grafana/loki:3.1.1
+#   volumes: [- ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml:ro, ...]
+#
+# por
+#
+#   build: { context: ./monitoring, dockerfile: Dockerfile.loki }
+#   volumes: [- loki_data:/loki]
+#
+# Edição de 30 segundos, e o config passa a viajar dentro da imagem.
+FROM grafana/loki:3.1.1
+COPY loki-config.yaml /etc/loki/local-config.yaml

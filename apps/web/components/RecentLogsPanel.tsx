@@ -4,10 +4,24 @@ import { useCallback, useEffect, useState } from 'react';
 import { DEMO_VERSION, formatTime, proxy, REFRESH_EVENT, type LogEntry } from '../lib/api';
 import { CorrelationChip } from './CorrelationChip';
 
-const LEVEL_STYLES: Record<LogEntry['level'], { badge: string; rule: string }> = {
-  error: { badge: 'bg-red-500/15 text-red-300 border-red-500/40', rule: 'border-l-red-500' },
-  warn: { badge: 'bg-amber-500/15 text-amber-300 border-amber-500/40', rule: 'border-l-amber-500' },
-  info: { badge: 'bg-slate-700/50 text-slate-300 border-slate-600', rule: 'border-l-slate-700' },
+// O erro precisa ser inconfundivel do fundo da sala: regua vermelha, fundo
+// tingido e mensagem em corpo maior. info e warn ficam deliberadamente quietos.
+const LEVEL_STYLES: Record<LogEntry['level'], { badge: string; row: string; text: string }> = {
+  error: {
+    badge: 'bg-red-500/20 text-red-200 border-red-500/50',
+    row: 'border-l-red-500 bg-red-950/40',
+    text: 'text-base font-medium text-red-100',
+  },
+  warn: {
+    badge: 'bg-amber-500/15 text-amber-300 border-amber-500/40',
+    row: 'border-l-amber-500 bg-slate-900/50',
+    text: 'text-sm text-slate-200',
+  },
+  info: {
+    badge: 'bg-slate-700/50 text-slate-300 border-slate-600',
+    row: 'border-l-slate-700 bg-slate-900/50',
+    text: 'text-sm text-slate-300',
+  },
 };
 
 export function RecentLogsPanel() {
@@ -58,7 +72,7 @@ export function RecentLogsPanel() {
           return (
             <li
               key={`${log.correlationId ?? 'x'}-${log.timestamp}-${index}`}
-              className={`log-enter rounded border-l-2 bg-slate-900/50 py-2.5 pr-3 pl-3 ${style.rule}`}
+              className={`log-enter rounded border-l-2 px-3 py-2.5 ${style.row}`}
             >
               <div className="flex items-center gap-2">
                 <span
@@ -74,7 +88,7 @@ export function RecentLogsPanel() {
                 ) : null}
               </div>
 
-              <p className="mt-1.5 text-sm leading-snug text-slate-200">{log.message}</p>
+              <p className={`mt-1.5 leading-snug ${style.text}`}>{log.message}</p>
 
               <div className="mt-1.5 flex flex-wrap items-center gap-2">
                 {log.productId ? (

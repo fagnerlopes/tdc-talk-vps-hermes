@@ -1,259 +1,231 @@
-# **Checklist Pré-Live — Segunda 18h**
+# Checklist Pré-Live — Segunda 18h
 
-Use este checklist 1 hora antes da live para validar que tudo está funcionando.
-
-## **✅ Infraestrutura (Docker Compose)**
-
-- [ ] `docker-compose up -d` executado com sucesso
-- [ ] Todos os containers estão rodando:
-  ```bash
-  docker-compose ps
-  # Esperado: postgres, api, web, promtail, loki — status "Up"
-  ```
-- [ ] Banco de dados foi seed:
-  ```bash
-  npm run seed
-  # Esperado: "Seed completed" ou similar
-  ```
-
-## **✅ Endpoints /v1 (Teste Prévio)**
-
-- [ ] `GET /v1/health` retorna 200:
-  ```bash
-  curl http://localhost:3001/v1/health
-  # Esperado: {"status": "ok"}
-  ```
-
-- [ ] `GET /v1/status` retorna métricas:
-  ```bash
-  curl http://localhost:3001/v1/status
-  # Esperado: {"uptime": ..., "checkouts": 0, "failures": 0}
-  ```
-
-- [ ] `POST /v1/checkout` funciona (clique 5 vezes, observe 50% falha):
-  ```bash
-  for i in {1..5}; do
-    curl -X POST http://localhost:3001/v1/checkout \
-      -H "Content-Type: application/json" \
-      -d "{\"productId\": \"MONITOR-240HZ\", \"userId\": \"user-1\"}"
-    echo ""
-    sleep 1
-  done
-  # Esperado: ~50% retornam 200, ~50% retornam 500
-  ```
-
-- [ ] `POST /v1/simulate-crash` funciona:
-  ```bash
-  curl -X POST http://localhost:3001/v1/simulate-crash
-  # Esperado: {"crashed": true}
-  
-  curl http://localhost:3001/v1/health
-  # Esperado: agora retorna 500
-  
-  curl -X POST http://localhost:3001/v1/simulate-crash  # Reset
-  # Esperado: recupera status 200
-  ```
-
-## **✅ Endpoints /v2 (Live Ao Vivo)**
-
-Repetir os mesmos testes acima, mas com `/v2`:
-
-- [ ] `GET /v2/health` retorna 200
-- [ ] `GET /v2/status` retorna métricas
-- [ ] `POST /v2/checkout` falha aleatoriamente (5x clicks)
-- [ ] `POST /v2/simulate-crash` funciona
-
-## **✅ Logs e Loki**
-
-- [ ] Promtail está enviando logs para Loki:
-  ```bash
-  docker-compose logs promtail | tail -20
-  # Esperado: logs de coleta, sem erros
-  ```
-
-- [ ] Loki está recebendo logs (query via API):
-  ```bash
-  curl -G \
-    -d 'query={job="api"} | json' \
-    -d 'limit=10' \
-    http://localhost:3100/loki/api/v1/query_range | jq '.data.result | length'
-  # Esperado: número > 0 (logs foram recebidos)
-  ```
-
-- [ ] Loki UI acessível:
-  ```bash
-  open http://localhost:3100
-  # Esperado: interface Grafana Loki carrega
-  ```
-
-- [ ] Logs estruturados aparecem corretamente (verificar em Loki UI):
-  - Campos: level, timestamp, correlationId, endpoint, productId, reason
-  - Formato: JSON válido
-
-## **✅ Frontend (Dashboard)**
-
-- [ ] Acesso ao dashboard:
-  ```bash
-  open http://localhost:3000
-  # Esperado: Dashboard HOSTMASTER carrega
-  ```
-
-- [ ] Dashboard mostra:
-  - [ ] Menu sidebar com navegação (Home, Produtos, Pedidos, Analytics, Settings)
-  - [ ] Lista de produtos com botão "Comprar [Nome]"
-  - [ ] Painel "Logs Recentes" no lado direito
-
-- [ ] Botão "Comprar [Produto]" funciona:
-  - [ ] Clique → POST /v2/checkout é chamado
-  - [ ] Status 200 → mensagem de sucesso
-  - [ ] Status 500 → mensagem de erro
-  - [ ] "Logs Recentes" atualiza em tempo real
-
-## **✅ Hermes Agent (Testes Simples)**
-
-- [ ] Hermes consegue acessar API da aplicação:
-  ```bash
-  # Teste manual: Hermes consulta /v2/health
-  curl http://localhost:3001/v2/health
-  # Esperado: 200
-  ```
-
-- [ ] Hermes consegue acessar Loki:
-  ```bash
-  curl -G \
-    -d 'query={job="api"} | json' \
-    -d 'limit=5' \
-    http://localhost:3100/loki/api/v1/query_range
-  # Esperado: JSON com logs estruturados
-  ```
-
-- [ ] Telegram Bot está configurado:
-  - [ ] Número do chat ID configurado
-  - [ ] Bot consegue enviar teste:
-    ```bash
-    # Envie uma msg teste via Hermes para verificar conectividade
-    ```
-
-## **✅ Dados de Teste**
-
-- [ ] Produtos foram seed corretamente:
-  ```bash
-  # Verificar no banco (se tiver acesso direto):
-  psql postgresql://dev_user:dev123@localhost:5432/hermes_demo -c "SELECT * FROM products;"
-  # Esperado: 3-5 produtos com IDs como TEMPLATE-NEXTJS, EBOOK-REACT, etc
-  ```
-
-- [ ] Usuários foram seed:
-  ```bash
-  # Verificar no banco:
-  psql postgresql://dev_user:dev123@localhost:5432/hermes_demo -c "SELECT * FROM users;"
-  # Esperado: 2-3 usuários fake
-  ```
-
-## **✅ Performance e Timeouts**
-
-- [ ] Endpoints respondem em < 1 segundo:
-  ```bash
-  time curl http://localhost:3001/v2/health
-  # Esperado: < 1000ms
-  ```
-
-- [ ] Logs chegam em Loki < 5 segundos após erro:
-  - Faça um `POST /v2/checkout`, observe erro
-  - Aguarde 5 segundos
-  - Consulte Loki, verifique se log apareceu
-
-- [ ] Dashboard atualiza em < 2 segundos:
-  - Clique "Comprar" no dashboard
-  - Observe "Logs Recentes" atualizar
-
-## **✅ Reset/Cleanup Pré-Live**
-
-- [ ] Estado da aplicação resetado:
-  ```bash
-  # Se simulou crash, resetar:
-  curl -X POST http://localhost:3001/v2/simulate-crash
-  curl -X POST http://localhost:3001/v2/simulate-crash  # Reset
-  
-  curl http://localhost:3001/v2/health
-  # Esperado: 200
-  ```
-
-- [ ] Logs antigos podem ser ignorados (não precisam deletar):
-  - Hermes buscará apenas erros dos últimos 5 minutos
-  - Logs antigos não interferem
-
-- [ ] Banco de dados em estado limpo:
-  ```bash
-  # Opcional: resetar orders/checkouts
-  # Mas não é necessário para a demo
-  ```
-
-## **✅ Documentação Pronta**
-
-- [ ] [PRD.md](PRD.md) atualizado e acessível
-- [ ] [CLAUDE.md](CLAUDE.md) atualizado e acessível
-- [ ] [AGENTE.md](AGENTE.md) criado e acessível
-- [ ] [README.md](README.md) criado e acessível
-
-## **✅ Comunicação & Telegram**
-
-- [ ] Chat privado com Hermes está aberto
-- [ ] Números do chat ID configurados corretamente
-- [ ] Teste mensagem simples para verificar conectividade
-- [ ] Hermes consegue enviar mensagem de teste para Telegram
-
-## **✅ Compartilhamento de Tela**
-
-- [ ] OBS/ScreenShare configurado:
-  - [ ] Resolução ok (1920x1080 ideal)
-  - [ ] Áudio funcionando
-  - [ ] Dashboard visível sem zoom excessivo
-
-- [ ] Aba Telegram aberta (para mostrar avisos em tempo real)
-- [ ] Aba Loki UI aberta (para mostrar logs quando necessário)
-- [ ] Terminal aberto (para mostrar curl commands se precisar)
-
-## **✅ Plano B (Se Algo Der Errado)**
-
-- [ ] Backup: Toda a stack pode ser reiniciada em < 2 minutos:
-  ```bash
-  docker-compose down
-  docker-compose up -d
-  npm run seed
-  ```
-
-- [ ] Hermes pode ser testado isoladamente (sem app rodando)
-
-- [ ] Se logs não chegarem em Loki: pode-se testar Hermes consultando logs locais
-
-## **✅ 15 minutos Antes da Live**
+Uma hora antes da live. A maior parte disto está automatizada:
 
 ```bash
-# Rodinha de verificação final
-echo "=== Verificação Final (15 min antes) ==="
-curl http://localhost:3001/v2/health && echo "✓ API Health OK"
-curl http://localhost:3000 > /dev/null && echo "✓ Dashboard OK"
-curl -s http://localhost:3100/loki/api/v1/query_range?query={job=\"api\"} | jq '.data.result | length' && echo "✓ Loki OK"
-docker-compose ps | grep "Up" && echo "✓ Containers OK"
-echo "=== Tudo pronto! Boa live! 🚀 ==="
+./scripts/smoke.sh          # 23 checagens; sai != 0 se algo falhar
+./scripts/reset-demo.sh     # baseline + assert
 ```
 
-## **Durante a Live (Quick Reference)**
+Contra a VPS:
+```bash
+API_URL=http://<HOST>:3001 WEB_URL=http://<HOST>:3000 \
+LOKI_URL=http://<HOST>:3100 PROMTAIL_URL=http://<HOST>:9080 \
+GRAFANA_URL=http://<HOST>:3300 ./scripts/smoke.sh
+```
 
-| Ação | Comando/URL |
-|------|------------|
-| Testar Dashboard | `http://localhost:3000` |
-| Testar API | `curl http://localhost:3001/v2/health` |
-| Ver Logs em Tempo Real | `http://localhost:3100` |
-| Simular Erro | Clique "Comprar [Produto]" no dashboard |
-| Avisar Hermes | Envie áudio/mensagem no Telegram |
-| Reset se Precisar | `docker-compose down && docker-compose up -d && npm run seed` |
+O que segue abaixo é a versão manual, para quando você quiser olhar com os próprios olhos.
 
----
+## Infraestrutura
 
-✅ **Checklist completo = live tranquila!**
+- [ ] Stack no ar:
+  ```bash
+  docker compose up -d
+  docker compose ps --services --filter status=running
+  # Esperado: api, grafana, loki, postgres, promtail, web
+  ```
+  Use `--services --filter status=running`, não `--format '{{.Service}}'` — versões antigas do compose não entendem o segundo.
 
-Qualquer dúvida, consulte [AGENTE.md](AGENTE.md) ou [README.md](README.md).
+- [ ] Banco populado — **o seed roda sozinho no boot** (`SEED_ON_BOOT=true`). Para rodar na mão:
+  ```bash
+  docker compose exec -T api node packages/database/dist/seed.js
+  # Esperado: Seed completed: 5 produtos, 2 usuarios
+  ```
+  `npm run seed` na raiz faz exatamente isso. **Não** existe `npm run seed` cru na VPS — lá não há `node_modules` nem `DATABASE_URL` no host.
 
-**Boa sorte! 🎬**
+## Endpoints /v1 (ensaio)
+
+- [ ] `GET /v1/health` = 200
+  ```bash
+  curl -s http://localhost:3001/v1/health | jq .
+  # {"status":"ok","version":"v1","timestamp":"..."}
+  ```
+
+- [ ] `GET /v1/status` traz métricas
+  ```bash
+  curl -s http://localhost:3001/v1/status | jq .
+  # uptime, checkouts, failures, failureRate, observedFailureRate, crashed
+  ```
+
+- [ ] `POST /v1/checkout` falha ~50%
+  ```bash
+  for i in $(seq 1 10); do
+    curl -s -o /dev/null -w '%{http_code} ' -X POST http://localhost:3001/v1/checkout \
+      -H 'content-type: application/json' \
+      -d '{"productId":"MONITOR-240HZ","userId":"user-1"}'
+  done; echo
+  # Esperado: entre 3 e 7 respostas 500 (tolerância binomial)
+  ```
+
+- [ ] `POST /v1/simulate-crash` funciona
+  ```bash
+  curl -s -X POST http://localhost:3001/v1/simulate-crash    # {"crashed":true,"version":"v1"}
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/v1/health   # 500
+  curl -s -X POST http://localhost:3001/v1/simulate-crash    # {"crashed":false,...}
+  curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3001/v1/health   # 200
+  ```
+
+## Endpoints /v2 (live)
+
+- [ ] Mesmas quatro checagens acima em `/v2`
+- [ ] **Os contadores de `/v1` não se moveram** — o estado é isolado por versão:
+  ```bash
+  curl -s http://localhost:3001/v1/status | jq -c '{checkouts,failures}'
+  curl -s http://localhost:3001/v2/status | jq -c '{checkouts,failures}'
+  ```
+
+## Logs e Loki
+
+- [ ] Promtail vivo:
+  ```bash
+  curl -s http://localhost:9080/ready     # Ready
+  ```
+
+- [ ] A API está escrevendo no arquivo que o Promtail lê:
+  ```bash
+  docker compose exec api tail -2 /var/log/app/api.log
+  ```
+
+- [ ] Loki conhece o stream:
+  ```bash
+  curl -s http://localhost:3100/loki/api/v1/label/job/values | jq -r '.data[]'
+  # Esperado: api
+  ```
+
+- [ ] **A query do AGENTE.md retorna dados** — esta é a checagem que decide a talk:
+  ```bash
+  curl -sG http://localhost:3100/loki/api/v1/query_range \
+    --data-urlencode 'query={job="api"} | json | level="error"' \
+    --data-urlencode 'limit=20' | jq '[.data.result[].values[]] | length'
+  # Esperado: > 0
+  ```
+  **`--data-urlencode`, sempre.** Com `-d 'query=...'` puro o curl não faz URL-encode e o Loki devolve HTTP 400.
+
+- [ ] Os 8 campos obrigatórios estão na linha:
+  ```bash
+  curl -sG http://localhost:3100/loki/api/v1/query_range \
+    --data-urlencode 'query={job="api"} | json | level="error"' \
+    --data-urlencode 'limit=1' \
+  | jq -r '.data.result[0].values[0][1] | fromjson | keys | join(",")'
+  # Deve conter: level, timestamp, correlationId, service, endpoint, productId, reason, message
+  ```
+
+- [ ] Ver os logs com os olhos: **Grafana em http://localhost:3300** → Explore → datasource Loki → `{job="api"}`.
+  **O Loki não tem UI.** `http://localhost:3100/` retorna 404 — isso é esperado. Para liveness do Loki use `/ready`.
+
+## Frontend
+
+- [ ] http://localhost:3000 carrega o dashboard HOSTMASTER
+- [ ] Sidebar com Home, Produtos, Pedidos, Analytics, Settings
+- [ ] 5 cards de produto com botão "Comprar [Nome]"
+- [ ] Painel "Logs recentes" à direita
+- [ ] Clique em "Comprar":
+  - [ ] 200 → toast verde com o `orderId`
+  - [ ] 500 → toast vermelho com o `reason` **e o `correlationId`**
+  - [ ] "Logs recentes" atualiza em ≤ 2s
+  - [ ] Clicar no chip do `correlationId` copia o valor
+
+## Hermes
+
+- [ ] O Hermes alcança a API pública:
+  ```bash
+  curl -s http://<HOST>:3001/v2/health
+  ```
+- [ ] O Hermes alcança o Loki público:
+  ```bash
+  curl -sG http://<HOST>:3100/loki/api/v1/query_range \
+    --data-urlencode 'query={job="api"} | json' --data-urlencode 'limit=5'
+  ```
+- [ ] **[AGENTE.md](AGENTE.md) está com as URLs públicas reais**, não `localhost` — o Hermes roda fora da VPS
+- [ ] Bot do Telegram configurado, chat ID correto, mensagem de teste entregue
+
+## Dados
+
+- [ ] Produtos:
+  ```bash
+  docker compose exec -T postgres psql -U dev_user -d hermes_demo -c "select id, price from products order by price desc;"
+  # Esperado: RTX-4060, MONITOR-240HZ, TECLADO-RGB, HEADSET-GAMER, MOUSEPAD-XL
+  ```
+- [ ] Usuários:
+  ```bash
+  docker compose exec -T postgres psql -U dev_user -d hermes_demo -c "select id, email from users;"
+  # Esperado: user-1 gamer-pro@example.com, user-2 tech-enthusiast@test.com
+  ```
+
+## Performance
+
+- [ ] Health responde em < 1s:
+  ```bash
+  time curl -s http://localhost:3001/v2/health > /dev/null
+  ```
+- [ ] Log chega ao Loki em < 5s:
+  ```bash
+  CID=$(curl -s -X POST http://localhost:3001/v2/checkout -H 'content-type: application/json' \
+    -d '{"productId":"MONITOR-240HZ","forceFailure":true}' | jq -r .correlationId)
+  sleep 4
+  curl -sG http://localhost:3100/loki/api/v1/query_range \
+    --data-urlencode "query={job=\"api\"} | json | correlationId=\"$CID\"" \
+  | jq '[.data.result[].values[]] | length'
+  # Esperado: 2
+  ```
+- [ ] Dashboard atualiza em < 2s após o clique
+
+## Reset pré-live
+
+- [ ] **Baseline restaurado** — este é o item mais fácil de esquecer e o mais caro:
+  ```bash
+  ./scripts/reset-demo.sh
+  # v1: failureRate=0.5 crashed=false health=200 OK
+  # v2: failureRate=0.5 crashed=false health=200 OK
+  ```
+  Se o `failureRate` ficar em `1.0` depois do smoke test, **todo** clique falha no palco e a premissa "o sistema normalmente funciona" desaba.
+
+- [ ] Logs antigos podem ficar — o Hermes busca por janela de tempo
+- [ ] Banco não precisa de limpeza
+
+## Documentação
+
+- [ ] [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) aberto numa aba
+- [ ] [AGENTE.md](AGENTE.md) com URLs públicas
+- [ ] [README.md](README.md) e [PRD.md](PRD.md) acessíveis
+
+## Tela e canais
+
+- [ ] OBS / compartilhamento em 1920×1080, áudio OK
+- [ ] Dashboard visível sem zoom excessivo
+- [ ] Aba do Telegram aberta
+- [ ] Aba do **Grafana (:3300)** aberta no Explore — não `:3100`, que não tem UI
+- [ ] Terminal aberto com os `curl` de emergência à mão
+
+## Plano B
+
+- [ ] Stack reinicia em < 2 min (medido: ~15s):
+  ```bash
+  time (docker compose down && docker compose up -d && \
+        until curl -sf localhost:3001/v2/health > /dev/null; do sleep 1; done)
+  ```
+  **Nunca use `-v`.** `docker compose down -v` apaga `postgres_data` **e** `loki_data`, levando junto todo o histórico que o Hermes iria buscar.
+
+- [ ] O Hermes pode ser demonstrado sozinho, consultando logs já existentes no Loki
+- [ ] Se o Promtail parar, os logs continuam em `docker compose logs api` e no painel do dashboard
+
+## 15 minutos antes
+
+```bash
+echo "=== Verificação final ==="
+./scripts/smoke.sh && ./scripts/reset-demo.sh
+echo "=== Pronto. Boa live ==="
+```
+
+## Referência rápida durante a live
+
+| Ação | Comando / URL |
+|---|---|
+| Dashboard | http://\<HOST\>:3000 |
+| Health da API | `curl http://<HOST>:3001/v2/health` |
+| Ver logs (humano) | http://\<HOST\>:3300 → Explore |
+| Simular erro | clicar em "Comprar" no dashboard |
+| **Garantir que o próximo clique falha** | `curl -X POST http://<HOST>:3001/v2/config -H 'content-type: application/json' -d '{"forceNextOutcome":"fail"}'` |
+| Derrubar o health | `curl -X POST http://<HOST>:3001/v2/simulate-crash` |
+| Voltar ao baseline | `./scripts/reset-demo.sh` |
+| Reiniciar a stack | `docker compose down && docker compose up -d` (**sem `-v`**) |
