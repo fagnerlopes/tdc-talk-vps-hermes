@@ -1,7 +1,8 @@
 import { PRODUCTS, type CatalogProduct } from '@hermes/database/catalog';
 
-import { AppShell } from '../components/AppShell';
-import { ProductGrid } from '../components/ProductGrid';
+import { StoreHeader } from '../components/StoreHeader';
+import { StoreProductGrid } from '../components/StoreProductGrid';
+import { StoreFooter } from '../components/StoreFooter';
 
 // Obrigatorio: sem isto o Next tenta buscar /v2/products em build time, quando
 // o container da API nem existe, e o build do Docker morre com ECONNREFUSED.
@@ -32,8 +33,12 @@ export default async function Loja() {
   const products = await getProducts();
 
   return (
-    <AppShell eyebrow="Loja · Gaming & Informatica" title="Produtos em destaque">
-      <ProductGrid products={products} />
-    </AppShell>
+    <div className="flex min-h-screen flex-col bg-[#0b1120]">
+      <StoreHeader />
+      <main className="flex-1">
+        <StoreProductGrid products={products} />
+      </main>
+      <StoreFooter />
+    </div>
   );
 }
