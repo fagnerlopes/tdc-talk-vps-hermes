@@ -319,6 +319,20 @@ curl -s -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/label/job/values" | jq -r 
 | `user-1` | gamer-pro@example.com |
 | `user-2` | tech-enthusiast@test.com |
 
+## Coolify — terceira fonte de sinal
+
+O Hermes pode consultar o Coolify (estado do contêiner) além do Loki (o que a aplicação
+disse) e da API (o que ela diz de si agora). É o que distingue "indisponibilidade
+simulada pela aplicação" de "queda real de infraestrutura" — sem essa fonte, os dois
+casos são indistinguíveis e o tratamento é oposto.
+
+O prompt, a disciplina **somente leitura** e a sequência de testes estão em
+[PROMPT-HERMES-COOLIFY.md](PROMPT-HERMES-COOLIFY.md).
+
+⚠️ O token do Coolify é de **acesso total** — reimplanta, altera configuração e lê
+segredos em texto claro. O Hermes usa apenas `GET`, e nunca `POST /api/v1/deploy`:
+um redeploy no meio da investigação reinicia os contêineres e destrói a evidência.
+
 ## Endpoints de controle (uso do apresentador, não do Hermes)
 
 Existem para tornar o palco determinístico. **O Hermes não deve chamá-los durante a demo** — se chamar, deixa de estar investigando e passa a estar dirigindo.
