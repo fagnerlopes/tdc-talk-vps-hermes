@@ -1,6 +1,8 @@
 import { PrismaClient } from '../generated/client';
 
 export * from './catalog';
+export * from './password';
+export * from './session';
 export { PrismaClient };
 export type { Product, User, Order } from '../generated/client';
 
