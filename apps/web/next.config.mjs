@@ -13,6 +13,14 @@ const nextConfig = {
 
   transpilePackages: ['@hermes/database'],
 
+  // O `output: standalone` rastreia so o que consegue ver nos imports. Os engines
+  // binarios do Prisma sao carregados em runtime POR CAMINHO, entao o tracer nao
+  // os encontra, o container sobe e morre no primeiro acesso ao banco — ou seja,
+  // no primeiro login. E uma falha que NAO aparece em `next dev`.
+  outputFileTracingIncludes: {
+    '/**': ['../../packages/database/generated/**'],
+  },
+
   // Terceira camada do noindex: metadata cobre HTML, app/robots.ts cobre quem le
   // robots.txt, e este header cobre o resto (JSON dos route handlers, assets).
   async headers() {

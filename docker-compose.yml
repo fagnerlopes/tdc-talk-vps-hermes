@@ -48,6 +48,11 @@ services:
       CHECKOUT_FAILURE_RATE: ${CHECKOUT_FAILURE_RATE:-0.5}
       CHECKOUT_MAX_SUCCESS_STREAK: ${CHECKOUT_MAX_SUCCESS_STREAK:-3}
       SEED_ON_BOOT: ${SEED_ON_BOOT:-true}
+      # Primeiro admin do painel. So tem efeito com admin_users vazia; se
+      # ADMIN_PASSWORD vier vazia, o seed gera 24 chars e imprime uma unica vez
+      # no log do container.
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@hostmaster.local}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
     volumes:
       - app_logs:/var/log/app
 
@@ -57,9 +62,16 @@ services:
       dockerfile: apps/web/Dockerfile
     restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_started
+      postgres:
+        condition: service_healthy
     environment:
       API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3001}
+      # O web passa a falar com o Postgres direto (sessoes e admins). Mesma
+      # string do servico api.
+      DATABASE_URL: ${DATABASE_URL:-postgresql://dev_user:dev123@postgres:5432/hermes_demo}
+      SESSION_TTL_HOURS: ${SESSION_TTL_HOURS:-12}
 
   # loki, promtail e grafana levam o proprio config DENTRO da imagem, em vez de
   # bind mount relativo. O Coolify reescreve binds relativos para um caminho do
