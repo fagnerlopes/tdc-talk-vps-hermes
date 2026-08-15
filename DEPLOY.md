@@ -36,19 +36,22 @@ O mapeamento vive no campo `docker_compose_domains` da aplicação:
 ```bash
 api -X PATCH "$COOLIFY/api/v1/applications/$APP" -d '{
   "docker_compose_domains": {
-    "web":     { "name": "web",     "domain": "https://hostmaster.fagnerlopes.dev:3000" },
-    "api":     { "name": "api",     "domain": "https://api.hostmaster.fagnerlopes.dev:3001" },
-    "loki":    { "name": "loki",    "domain": "https://loki.hostmaster.fagnerlopes.dev:3100" },
-    "grafana": { "name": "grafana", "domain": "https://grafana.hostmaster.fagnerlopes.dev:3000" }
+    "web":       { "name": "web",       "domain": "https://hostmaster.fagnerlopes.dev:3000" },
+    "api":       { "name": "api",       "domain": "https://api.hostmaster.fagnerlopes.dev:3001" },
+    "loki-auth": { "name": "loki-auth", "domain": "https://loki.hostmaster.fagnerlopes.dev:3100" },
+    "grafana":   { "name": "grafana",   "domain": "https://grafana.hostmaster.fagnerlopes.dev:3000" }
   }
 }'
 ```
 
-Três detalhes que custam tempo se você não souber:
+O domínio do Loki aponta para o serviço **`loki-auth`**, não para o `loki` — ver "Proteção do Loki" abaixo.
+
+Quatro detalhes que custam tempo se você não souber:
 
 - **A porta no fim de cada URL é a porta interna do container, não a pública.** É assim que o Traefik sabe para onde rotear. Por isso o Grafana é `:3000` (o que ele escuta) e não `:3300` (o que o compose publicava no host).
 - **O campo `name` é obrigatório** e repete a chave do serviço. Sem ele o Coolify 4.3.2 responde `Validation failed` com `docker_compose_domains.web.name field is required`. Sucesso devolve só `{"uuid":"..."}`.
 - **O campo volta da API como string JSON**, não como objeto. Para conferir: `api "$COOLIFY/api/v1/applications/$APP" | jq -r '.docker_compose_domains' | jq '.'`
+- **Serviço novo só aceita domínio depois de ser deployado uma vez.** O Coolify valida a chave contra o compose que ele já parseou e **descarta em silêncio** o que não reconhece — o PATCH responde `{"uuid":"..."}` como se tivesse dado certo. Ordem: `git push` → deploy → PATCH do domínio → deploy de novo.
 
 Existe um bug conhecido ([#4326](https://github.com/coollabsio/coolify/issues/4326)) em que o PATCH responde sucesso e o domínio não persiste. Sempre leia de volta antes de disparar o deploy.
 
@@ -115,74 +118,68 @@ Ao criar env var pela API, **não** envie `is_build_time` — o Coolify 4.3.2 re
 
 O build completo leva ~5 min (duas imagens Node). Na segunda às 18h deve ser só smoke test.
 
-## Exposição do Loki (R4) — ABERTA AGORA, precisa ser fechada
+## Proteção do Loki — resolvida
 
-**O Hermes roda numa VPS separada do Coolify.** Ou seja, a porta 3100 precisa ser alcançável pela internet — `127.0.0.1:3100:3100` não serve aqui.
+**O Hermes roda numa VPS separada do Coolify**, então o Loki precisa ser alcançável pela internet. A escolha foi **basic-auth sobre TLS**, e não a allowlist por IP: o IP de saída da VPS do Hermes pode mudar, e com basic-auth a credencial não trafega em claro.
 
-O problema não é teórico. Com a stack no ar, um `push` anônimo de um laptop qualquer foi aceito:
-
-```
-$ curl -X POST http://vps70013.publiccloud.com.br:3100/loki/api/v1/push \
-    -H 'content-type: application/json' \
-    -d '{"streams":[{"stream":{"job":"teste-de-exposicao"},"values":[["<ts>","linha injetada de fora"]]}]}'
-HTTP 204
-
-$ curl -s http://vps70013.publiccloud.com.br:3100/loki/api/v1/label/job/values | jq -c '.data'
-["api","teste-de-exposicao"]
-```
-
-O repositório é público e o Loki roda com `auth_enabled: false`. Quem achar a 3100 **lê e escreve** logs. Escrever é o pior dos dois: dá para injetar linhas em `job="api"` e envenenar a investigação do Hermes ao vivo.
-
-O stream `teste-de-exposicao` acima ficou no Loki. É inofensivo — as queries da demo filtram `{job="api"}` — mas serve de marcador: se ele ainda estiver lá, a porta continua aberta.
-
-### Opção A — allowlist por IP (recomendada)
-
-Não exige credencial nenhuma no repositório público e não muda uma vírgula nas queries do Hermes.
-
-Na VPS do Coolify, descubra o IP de saída da VPS do Hermes e libere só ele:
+O problema era real, não teórico. Com a stack no ar, um `push` anônimo de um laptop qualquer era aceito com **HTTP 204** — dava para injetar linhas em `job="api"` e envenenar a investigação do Hermes ao vivo. Hoje:
 
 ```bash
-# na VPS do Hermes:
-curl -s https://api.ipify.org; echo
+LOKI=https://loki.hostmaster.fagnerlopes.dev
+curl -s -o /dev/null -w '%{http_code}\n' "$LOKI/ready"                    # 401
+curl -s -o /dev/null -u hermes:errada -w '%{http_code}\n' "$LOKI/ready"   # 401
+curl -s -o /dev/null -u "hermes:$SENHA" -w '%{http_code}\n' "$LOKI/ready" # 200
 
-# na VPS do Coolify, como root:
-ufw allow from <IP-DA-VPS-DO-HERMES> to any port 3100 proto tcp
-ufw deny 3100/tcp
-ufw status numbered
+# o push anônimo que respondia 204:
+curl -s -o /dev/null -w '%{http_code}\n' -X POST "$LOKI/loki/api/v1/push" \
+  -H 'content-type: application/json' \
+  -d '{"streams":[{"stream":{"job":"x"},"values":[["1","y"]]}]}'           # 401
 ```
 
-A ordem importa: a regra específica de `allow` precisa vir **antes** do `deny`. Confirme com `ufw status numbered` e, se preciso, reordene com `ufw insert 1 ...`.
+### Por que um proxy nginx e não um middleware do Traefik
 
-Valide dos dois lados:
+A primeira tentativa foi um middleware `basicauth` do Traefik via label, como manda o design. **Não funciona no Coolify.** O Coolify substitui variáveis em `environment:`, mas **escapa** `${VAR}` para `$${VAR}` em `labels:`. O middleware recebia a string literal `${LOKI_BASIC_AUTH}` como lista de usuários, o Traefik marcava o roteador como inválido, e todo acesso ao domínio virava **503 `no available server`** — sintoma que parece problema de rede e não de configuração.
+
+Escrever o hash direto no label não é opção: **este repositório é público.**
+
+A solução é o serviço `loki-auth` — um nginx de ~20 linhas que faz o basic-auth e encaminha para `http://loki:3100`. O domínio `loki.hostmaster.fagnerlopes.dev` aponta para **ele**, não para o `loki`. O TLS continua sendo do Traefik.
+
+### O hash vai em base64, e isso não é frescura
+
+`LOKI_BASIC_AUTH_B64` guarda a linha htpasswd **codificada em base64**. O motivo é que o `$` do hash apr1 não sobrevive à interpolação do Compose:
+
+| valor no `.env` | o que chega no container |
+|---|---|
+| `hermes:$apr1$Nqc9VQaU$EteDq...` | `hermes:$apr1qc9VQaUteDq...` (comeu os `$X`) |
+| `hermes:$$apr1$$Nqc9VQaU$$EteDq...` | `hermes:$$apr1$qc9VQaU$teDq...` (outro estrago) |
+| base64 | intacto |
+
+Base64 usa só `[A-Za-z0-9+/=]`, atravessa Compose e Coolify sem alteração. Gerar:
+
 ```bash
-# da VPS do Hermes — deve responder
-curl -s http://vps70013.publiccloud.com.br:3100/ready
-
-# do seu laptop — deve dar timeout
-curl -s -m 5 http://vps70013.publiccloud.com.br:3100/ready
+printf '%s' "hermes:$(openssl passwd -apr1 '<senha>')" | base64 -w0
 ```
 
-### Opção B — basic-auth no Traefik (se o IP do Hermes for dinâmico)
+O container **aborta no boot** se `LOKI_BASIC_AUTH_B64` estiver ausente ou não decodificar num par `usuario:hash` — falhar alto é melhor que subir um Loki aberto por engano.
 
-No Coolify, adicione ao serviço `loki` os labels do Traefik com um middleware `basicauth`. **Não** coloque a senha no [AGENTE.md](AGENTE.md) — o repositório é público. Deixe o `AGENTE.md` com placeholders e passe as credenciais ao Hermes por variável de ambiente:
+### O que NÃO é afetado
+
+Os dois caminhos internos não passam pelo `loki-auth`:
+
+- Promtail → `http://loki:3100` (push)
+- Grafana → `http://loki:3100` (datasource)
+
+O basic-auth barra só quem vem de fora. **Se o Grafana parar de ver dados, o problema é outro.**
+
+### Antes de subir ao palco
 
 ```bash
-curl -sG -u "$LOKI_USER:$LOKI_PASS" "https://loki.vps70013.publiccloud.com.br/loki/api/v1/query_range" \
-  --data-urlencode 'query={job="api"} | json | level="error"'
+curl -sG -u "hermes:$SENHA" "$LOKI/loki/api/v1/label/job/values" | jq -c '.data'
+# esperado: ["api"]
+# qualquer job além de "api" = alguém escreveu de fora
 ```
 
-Gere o hash com `htpasswd -nb hermes '<senha>'` e dobre os `$` para `$$` no valor do label.
-
-### Nos dois casos
-
-- A 3100 fica exposta **só até a live de segunda**. Depois, `docker compose down` ou feche a porta.
-- O Grafana (`:3300`) fala com o Loki pela rede interna do compose e não é afetado por nenhuma das duas opções.
-- Antes de subir ao palco, confira se ninguém escreveu de fora:
-  ```bash
-  curl -s http://vps70013.publiccloud.com.br:3100/loki/api/v1/label/job/values | jq -c '.data'
-  # esperado depois de fechar a porta: ["api","teste-de-exposicao"]
-  # qualquer job novo além desses dois = alguém escreveu de fora
-  ```
+O marcador `teste-de-exposicao`, deixado pelo push anônimo original, saiu da janela padrão de consulta de labels e não aparece mais. Isso é esperado.
 
 ### As outras portas abertas
 

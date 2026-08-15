@@ -943,7 +943,22 @@
                 "ready"
               ]
             },
-            "description": "O Loki **não tem UI**: a raiz retorna 404 e isso é normal. Para liveness use `/ready`; para olhar log com os olhos, use o Grafana."
+            "description": "O Loki **não tem UI**: a raiz retorna 404 e isso é normal. Para liveness use `/ready`; para olhar log com os olhos, use o Grafana.",
+            "auth": {
+              "type": "basic",
+              "basic": [
+                {
+                  "key": "username",
+                  "value": "{{loki_user}}",
+                  "type": "string"
+                },
+                {
+                  "key": "password",
+                  "value": "{{loki_pass}}",
+                  "type": "string"
+                }
+              ]
+            }
           }
         },
         {

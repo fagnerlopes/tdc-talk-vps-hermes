@@ -14,29 +14,34 @@ Nada disso está codificado na aplicação. A aplicação só loga; toda a intel
 
 ## Ambiente de acesso
 
-> URLs de produção, já no ar. O Hermes roda numa **VPS separada** da que hospeda a
-> aplicação — ele não enxerga `localhost`, por isso tudo abaixo usa o host público.
+> URLs de produção, já no ar, todas sobre HTTPS. O Hermes roda numa **VPS separada**
+> da que hospeda a aplicação — ele não enxerga `localhost`, por isso tudo abaixo usa
+> o domínio público.
 >
-> **Pendente:** o acesso à porta 3100 ainda precisa ser restrito ao IP da VPS do
-> Hermes — ver [DEPLOY.md](DEPLOY.md#exposição-do-loki-r4). Feita a allowlist por IP,
-> nenhum comando desta página muda. Se a escolha for basic-auth, todo `curl` ao Loki
-> passa a precisar de `-u "$LOKI_USER:$LOKI_PASS"`.
+> **O Loki exige basic-auth.** Todo `curl` ao Loki precisa de `-u "$LOKI_USER:$LOKI_PASS"`.
+> As credenciais chegam ao Hermes por variável de ambiente e **não estão neste
+> repositório**, que é público. A API da aplicação continua aberta, por design — é o
+> que mantém a observabilidade agnóstica.
 
 | Recurso | URL | Descrição |
 |---|---|---|
-| **API da aplicação** | `http://vps70013.publiccloud.com.br:3001` | endpoints `/v1` e `/v2` |
-| **Loki** | `http://vps70013.publiccloud.com.br:3100` | query de logs — o canal principal do Hermes |
-| **Grafana** | `http://vps70013.publiccloud.com.br:3300` | Explore, sem login (uso humano, não do agente) |
+| **API da aplicação** | `https://api.hostmaster.fagnerlopes.dev` | endpoints `/v1` e `/v2`, sem autenticação |
+| **Loki** | `https://loki.hostmaster.fagnerlopes.dev` | query de logs — **exige `-u "$LOKI_USER:$LOKI_PASS"`** |
+| **Grafana** | `https://grafana.hostmaster.fagnerlopes.dev` | Explore, sem login (uso humano, não do agente) |
 | **Telegram** | canal privado | recebe comandos e envia alertas |
-| **PostgreSQL** | `vps70013.publiccloud.com.br:5432` | `dev_user` / `dev123` / `hermes_demo` |
 
-Para rodar contra a stack local: substituir `vps70013.publiccloud.com.br` por `localhost`.
+O **PostgreSQL não é mais acessível de fora** — a porta 5432 foi fechada, junto com as
+outras portas cruas. Para cruzar um `correlationId` com a tabela `orders`, use
+`GET /v2/logs` na API ou peça acesso ao host.
+
+Para rodar contra a stack local: `API=http://localhost:3001`, `LOKI=http://localhost:3100`
+(sem `-u`, o basic-auth só existe em produção).
 
 ## 1. Consultar o estado da aplicação
 
 ```bash
-curl -s http://vps70013.publiccloud.com.br:3001/v2/health | jq '.'
-curl -s http://vps70013.publiccloud.com.br:3001/v2/status | jq '.'
+curl -s https://api.hostmaster.fagnerlopes.dev/v2/health | jq '.'
+curl -s https://api.hostmaster.fagnerlopes.dev/v2/status | jq '.'
 ```
 
 Resposta de `/v2/health`:
@@ -63,14 +68,14 @@ Resposta de `/v2/status`:
 
 ## 2. Consultar logs no Loki
 
-**Endpoint:** `GET http://vps70013.publiccloud.com.br:3100/loki/api/v1/query_range`
+**Endpoint:** `GET https://loki.hostmaster.fagnerlopes.dev/loki/api/v1/query_range`
 
 ⚠️ **Use `--data-urlencode`, nunca `-d`.** Uma query LogQL contém `|`, `{`, `}`, `"` e espaços. Com `-d` puro o curl não faz URL-encode e o Loki responde **HTTP 400**.
 
 ```bash
-LOKI=http://vps70013.publiccloud.com.br:3100
+LOKI=https://loki.hostmaster.fagnerlopes.dev
 
-curl -sG "$LOKI/loki/api/v1/query_range" \
+curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
   --data-urlencode 'query={job="api"} | json | level="error"' \
   --data-urlencode "start=$(date -u -d '5 minutes ago' +%s)000000000" \
   --data-urlencode "end=$(date -u +%s)000000000" \
@@ -84,7 +89,7 @@ curl -sG "$LOKI/loki/api/v1/query_range" \
 A resposta aninha os valores em `.data.result[].values[][1]`. Para trabalhar com os campos:
 
 ```bash
-curl -sG "$LOKI/loki/api/v1/query_range" \
+curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
   --data-urlencode 'query={job="api"} | json | level="error"' \
   --data-urlencode 'limit=20' \
 | jq -r '.data.result[].values[][1] | fromjson
@@ -152,12 +157,12 @@ Leitura:
 Cada checkout gera **exatamente 2 linhas** com o mesmo `correlationId`: o início (`info`) e o desfecho (`info` de sucesso ou `error` de falha).
 
 ```bash
-curl -sG "$LOKI/loki/api/v1/query_range" \
+curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
   --data-urlencode 'query={job="api"} | json | correlationId="req-a1b2c3d4"' \
   --data-urlencode 'limit=10' | jq -r '.data.result[].values[][1]'
 ```
 
-O mesmo `correlationId` também está gravado na tabela `orders` do Postgres — segundo ângulo de investigação, se precisar confirmar o que foi persistido.
+O mesmo `correlationId` também está gravado na tabela `orders` do Postgres. É um segundo ângulo de investigação, mas **o Postgres não é alcançável de fora** desde o fechamento das portas — de fora, use `GET /v2/logs`.
 
 ## 4. Criar cron job de monitoramento
 
@@ -292,7 +297,7 @@ O stream tem **um label só**: `job="api"`. Não existe label `level` nem `endpo
 
 Confirmar a qualquer momento:
 ```bash
-curl -s "$LOKI/loki/api/v1/label/job/values" | jq -r '.data[]'   # => api
+curl -s -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/label/job/values" | jq -r '.data[]'   # => api
 ```
 
 ## Dados de teste
@@ -320,25 +325,25 @@ Existem para tornar o palco determinístico. **O Hermes não deve chamá-los dur
 
 ```bash
 # provocar uma falha por curl, sem alterar o estado global
-curl -X POST http://vps70013.publiccloud.com.br:3001/v2/checkout -H 'content-type: application/json' \
+curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/checkout -H 'content-type: application/json' \
   -d '{"productId":"MONITOR-240HZ","userId":"user-1","forceFailure":true}'
 
 # garantir que o PRÓXIMO clique falhe
-curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' \
+curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/config -H 'content-type: application/json' \
   -d '{"forceNextOutcome":"fail"}'
 
 # ajustar a taxa de falha
-curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' \
+curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/config -H 'content-type: application/json' \
   -d '{"failureRate":0.5}'
 
 # voltar ao baseline
-curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' -d '{"reset":true}'
+curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/config -H 'content-type: application/json' -d '{"reset":true}'
 
 # derrubar / restabelecer o health
-curl -X POST http://vps70013.publiccloud.com.br:3001/v2/simulate-crash
+curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/simulate-crash
 
 # últimas linhas do ring buffer (é o que o painel do dashboard consome)
-curl -s 'http://vps70013.publiccloud.com.br:3001/v2/logs?limit=10' | jq '.logs'
+curl -s 'https://api.hostmaster.fagnerlopes.dev/v2/logs?limit=10' | jq '.logs'
 ```
 
 **Uma falha forçada produz uma linha de log byte-idêntica a uma falha natural.** Não existe campo `forced`. O Hermes não tem — e não deve ter — como distinguir as duas.
@@ -351,7 +356,8 @@ curl -s 'http://vps70013.publiccloud.com.br:3001/v2/logs?limit=10' | jq '.logs'
 ✅ A correlação é confiável: 2 linhas por transação, sempre
 ✅ O Telegram é o canal do Hermes
 
-❌ Não há autenticação — quem souber o bot pode usar
+❌ A API não autentica — quem achar a URL pode chamá-la (por design: é o que mantém a observabilidade agnóstica)
+❌ O Loki **autentica**: sem `-u "$LOKI_USER:$LOKI_PASS"` toda query responde 401
 ❌ Não há persistência de cron — ao desligar o container, os crons morrem
 ❌ Dados sensíveis: nenhum, tudo é fictício
 
@@ -361,12 +367,17 @@ curl -s 'http://vps70013.publiccloud.com.br:3001/v2/logs?limit=10' | jq '.logs'
 Você é um agente de observabilidade monitorando um e-commerce em uma VPS.
 
 Você tem acesso a:
-1. API da aplicação (health, status)
-2. API do Loki (logs estruturados)
+1. API da aplicação em https://api.hostmaster.fagnerlopes.dev (health, status) — sem autenticação
+2. API do Loki em https://loki.hostmaster.fagnerlopes.dev (logs estruturados) — EXIGE basic-auth
 3. Telegram (comandos e alertas)
 
+O Loki está atrás de basic-auth. TODA chamada a ele precisa de
+-u "$LOKI_USER:$LOKI_PASS", com as credenciais vindas de variável de ambiente.
+Sem isso a resposta é HTTP 401 e não HTTP 400 — se você vir 401, é credencial,
+não query malformada.
+
 Ao investigar um erro:
-1. Consulte o Loki com --data-urlencode (query com | e {} quebra sem isso)
+1. Consulte o Loki com --data-urlencode (query com | e {} quebra sem isso) e com -u
 2. Filtre com {job="api"} | json | level="error" — job é o único label
 3. Extraia timestamp, correlationId, productId e reason
 4. Use o correlationId para reconstruir a transação (são 2 linhas)
