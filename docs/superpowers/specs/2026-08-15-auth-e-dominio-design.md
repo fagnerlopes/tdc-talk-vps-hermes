@@ -46,6 +46,8 @@ Dentro de `/dashboard`, num `<details>` **fechado por padrão**, em cinza e sem 
 
 Nenhum endpoint novo: tudo chama `POST /vN/config`, `/vN/simulate-crash` e `/vN/checkout` pelo proxy existente.
 
+A collection do Postman em [`postman/`](../../../postman/) cobre exatamente as mesmas operações e **complementa** estes controles, não os substitui. Os botões são o caminho principal; a collection é o plano B para quando a sessão do dashboard falhar. Ao alterar um controle aqui, atualizar a pasta 3 da collection junto.
+
 **Risco assumido:** um botão "forçar erro" visível na tela projetada conta para a plateia que a falha é encenada. Ficar recolhido por padrão reduz, não elimina. Se aparecer no telão durante o Ato 2, a premissa enfraquece.
 
 ## 3. Autenticação
