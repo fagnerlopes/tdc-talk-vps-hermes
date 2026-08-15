@@ -1,0 +1,26 @@
+{
+  "name": "tdc-talk-vps-hermes",
+  "version": "1.0.0",
+  "private": true,
+  "description": "TDC Demo — E-commerce HOSTMASTER + Hermes Agent (observabilidade agnostica via Loki)",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @hermes/database && npm run build --workspace @hermes/api && npm run build --workspace @hermes/web",
+    "build:api": "npm run build --workspace @hermes/database && npm run build --workspace @hermes/api",
+    "dev:api": "npm run dev --workspace @hermes/api",
+    "dev:web": "npm run dev --workspace @hermes/web",
+    "up": "docker compose up -d --build",
+    "down": "docker compose down",
+    "ps": "docker compose ps",
+    "logs": "docker compose logs -f api",
+    "seed": "docker compose exec -T api node packages/database/dist/seed.js",
+    "smoke": "./scripts/smoke.sh",
+    "reset": "./scripts/reset-demo.sh"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
