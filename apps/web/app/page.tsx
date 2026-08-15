@@ -1,10 +1,7 @@
 import { PRODUCTS, type CatalogProduct } from '@hermes/database/catalog';
 
+import { AppShell } from '../components/AppShell';
 import { ProductGrid } from '../components/ProductGrid';
-import { RecentLogsPanel } from '../components/RecentLogsPanel';
-import { Sidebar } from '../components/Sidebar';
-import { StatsStrip } from '../components/StatsStrip';
-import { TopBar } from '../components/TopBar';
 
 // Obrigatorio: sem isto o Next tenta buscar /v2/products em build time, quando
 // o container da API nem existe, e o build do Docker morre com ECONNREFUSED.
@@ -24,25 +21,19 @@ async function getProducts(): Promise<CatalogProduct[]> {
   return PRODUCTS;
 }
 
-export default async function Home() {
+/**
+ * A LOJA — o que um cliente veria.
+ *
+ * Sem stats, sem logs, sem controles: tudo isso mora no /dashboard. E essa
+ * separacao que faz o Ato 1 ("loja de cliente falhando") e o Ato 2 ("dev
+ * investigando") serem cenas distintas no palco.
+ */
+export default async function Loja() {
   const products = await getProducts();
 
   return (
-    <div className="flex min-h-screen">
-      <Sidebar />
-
-      <div className="flex min-w-0 flex-1 flex-col">
-        <TopBar />
-
-        <main className="flex flex-1 flex-col gap-6 p-6 lg:p-8">
-          <StatsStrip />
-
-          <div className="grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
-            <ProductGrid products={products} />
-            <RecentLogsPanel />
-          </div>
-        </main>
-      </div>
-    </div>
+    <AppShell eyebrow="Loja · Gaming & Informatica" title="Produtos em destaque">
+      <ProductGrid products={products} />
+    </AppShell>
   );
 }

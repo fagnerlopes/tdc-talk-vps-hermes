@@ -5,7 +5,7 @@ import { DEMO_VERSION, proxy } from '../lib/api';
 
 type Health = 'ok' | 'down' | 'unknown';
 
-export function TopBar() {
+export function TopBar({ eyebrow, title }: { eyebrow: string; title: string }) {
   const [health, setHealth] = useState<Health>('unknown');
 
   useEffect(() => {
@@ -36,11 +36,9 @@ export function TopBar() {
     <header className="flex h-20 shrink-0 items-center justify-between border-b border-slate-800 bg-[#0d1526] px-6 lg:px-8">
       <div>
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500">
-          Loja · Gaming &amp; Informatica
+          {eyebrow}
         </p>
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-50 lg:text-3xl">
-          Painel administrativo
-        </h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-50 lg:text-3xl">{title}</h1>
       </div>
 
       <div className="flex items-center gap-4">

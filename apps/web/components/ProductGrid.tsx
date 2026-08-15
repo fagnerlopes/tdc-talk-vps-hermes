@@ -45,10 +45,15 @@ export function ProductGrid({ products }: { products: CatalogProduct[] }) {
           correlationId: payload.correlationId,
         });
       } else {
+        // O cliente NAO ve o `reason` tecnico (payment_gateway_timeout) — e
+        // exatamente o que o Hermes vai descobrir no Loki. Lojas de verdade
+        // mostram um codigo de suporte, entao o correlationId na tela e
+        // realista, e preserva o beat de ler o id em voz alta antes de
+        // perguntar ao agente.
         addToast({
           kind: 'error',
-          title: 'Pagamento nao concluido',
-          detail: `${product.name} · ${payload.error ?? 'erro desconhecido'}`,
+          title: 'Nao foi possivel concluir o pagamento',
+          detail: `${product.name} · tente novamente em alguns instantes`,
           correlationId: payload.correlationId,
         });
       }
@@ -69,7 +74,7 @@ export function ProductGrid({ products }: { products: CatalogProduct[] }) {
       <div className="mb-4 flex items-baseline justify-between">
         <h2 className="text-xl font-semibold tracking-tight text-slate-100">Produtos</h2>
         <p className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500">
-          POST /{DEMO_VERSION}/checkout
+          entrega para todo o Brasil
         </p>
       </div>
 
@@ -129,7 +134,7 @@ export function ProductGrid({ products }: { products: CatalogProduct[] }) {
             {toast.correlationId ? (
               <p className="mt-2.5 flex items-center gap-2">
                 <span className="font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400">
-                  correlationId
+                  codigo de referencia
                 </span>
                 <CorrelationChip
                   id={toast.correlationId}

@@ -13,6 +13,17 @@ const nextConfig = {
 
   transpilePackages: ['@hermes/database'],
 
+  // Terceira camada do noindex: metadata cobre HTML, app/robots.ts cobre quem le
+  // robots.txt, e este header cobre o resto (JSON dos route handlers, assets).
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [{ key: 'X-Robots-Tag', value: 'noindex, nofollow' }],
+      },
+    ];
+  },
+
   eslint: { ignoreDuringBuilds: true },
   typescript: { ignoreBuildErrors: false },
 };

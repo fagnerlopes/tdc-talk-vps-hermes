@@ -63,7 +63,7 @@ export function RecentLogsPanel() {
       <ol className="flex flex-col gap-2 rounded-lg border border-slate-800 bg-[#131c2e] p-3">
         {logs.length === 0 ? (
           <li className="px-2 py-8 text-center text-sm text-slate-500">
-            Nenhuma atividade ainda. Clique em Comprar para gerar a primeira linha.
+            Nenhuma atividade ainda. Compre algo na loja para gerar a primeira linha.
           </li>
         ) : null}
 

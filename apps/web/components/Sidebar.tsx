@@ -1,12 +1,22 @@
-const NAV = [
-  { label: 'Home', active: true },
-  { label: 'Produtos', active: false },
-  { label: 'Pedidos', active: false },
-  { label: 'Analytics', active: false },
-  { label: 'Settings', active: false },
+'use client';
+
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+
+// "Loja", "Painel" e "Usuarios" navegam de verdade — sao as tres telas que
+// existem. Os demais continuam decorativos, como sempre foram: um painel
+// administrativo real tem mais itens, e a moldura precisa parecer plausivel.
+const LINKS = [
+  { label: 'Loja', href: '/' },
+  { label: 'Painel', href: '/dashboard' },
+  { label: 'Usuarios', href: '/dashboard/usuarios' },
 ];
 
+const DECORATIVE = ['Produtos', 'Pedidos', 'Analytics', 'Settings'];
+
 export function Sidebar() {
+  const pathname = usePathname();
+
   return (
     <aside className="hidden w-60 shrink-0 flex-col border-r border-slate-800 bg-[#0d1526] lg:flex">
       <div className="flex h-20 items-center gap-3 border-b border-slate-800 px-6">
@@ -18,21 +28,39 @@ export function Sidebar() {
 
       <nav className="flex flex-col gap-1 p-4">
         <p className="px-3 pb-2 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500">
+          Navegacao
+        </p>
+
+        {LINKS.map((item) => {
+          const active = pathname === item.href;
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              aria-current={active ? 'page' : undefined}
+              className={
+                active
+                  ? 'rounded border-l-2 border-amber-500 bg-slate-800/60 px-3 py-2.5 text-base font-medium text-slate-100'
+                  : 'rounded border-l-2 border-transparent px-3 py-2.5 text-base text-slate-400 transition hover:bg-slate-800/40 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none'
+              }
+            >
+              {item.label}
+            </Link>
+          );
+        })}
+
+        <p className="px-3 pt-4 pb-2 font-mono text-[11px] uppercase tracking-[0.18em] text-slate-500">
           Painel
         </p>
-        {NAV.map((item) => (
-          <a
-            key={item.label}
-            href="#"
-            aria-current={item.active ? 'page' : undefined}
-            className={
-              item.active
-                ? 'rounded border-l-2 border-amber-500 bg-slate-800/60 px-3 py-2.5 text-base font-medium text-slate-100'
-                : 'rounded border-l-2 border-transparent px-3 py-2.5 text-base text-slate-400 transition hover:bg-slate-800/40 hover:text-slate-200 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none'
-            }
+
+        {DECORATIVE.map((label) => (
+          <span
+            key={label}
+            aria-disabled="true"
+            className="cursor-default rounded border-l-2 border-transparent px-3 py-2.5 text-base text-slate-500"
           >
-            {item.label}
-          </a>
+            {label}
+          </span>
         ))}
       </nav>
 
