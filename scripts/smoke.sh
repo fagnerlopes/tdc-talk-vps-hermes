@@ -45,6 +45,20 @@ if [ -n "$LOKI_USER" ]; then
   loki_auth=(-u "${LOKI_USER}:${LOKI_PASS}")
 fi
 
+# As checagens que usam `docker compose` inspecionam a stack DESTE host. Rodando
+# contra a VPS a partir do repositorio, com uma stack local de pe, elas passariam
+# olhando para os containers errados — um falso positivo que esconde exatamente o
+# que o smoke deveria pegar. Por isso so valem quando o alvo e local.
+ALVO_LOCAL=no
+case "$WEB_URL" in
+  *localhost*|*127.0.0.1*) ALVO_LOCAL=yes ;;
+esac
+if [ "$ALVO_LOCAL" = "yes" ] && [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
+  DOCKER_LOCAL=yes
+else
+  DOCKER_LOCAL=no
+fi
+
 PASS=0
 FAIL=0
 SKIP=0
@@ -72,7 +86,7 @@ head_ "1. Stack de pe"
 # `--services --filter status=running` em vez de `--format '{{.Service}}'`:
 # o compose 2.3.3 nao entende o segundo, e nao da para assumir paridade de
 # versao entre o laptop e a VPS.
-if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
+if [ "$DOCKER_LOCAL" = "yes" ]; then
   running=$(docker compose ps --services --filter status=running 2>/dev/null | grep -c .)
   if [ "$running" -ge 7 ]; then
     ok "$running servicos rodando"
@@ -80,7 +94,7 @@ if [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1; then
     bad "so $running servicos rodando (esperado 7: postgres api web loki loki-auth promtail grafana)"
   fi
 else
-  ok "sem docker-compose.yml local — assumindo host remoto, pulando"
+  skip "contagem de containers — alvo remoto; rode na VPS: docker compose ps --services --filter status=running"
 fi
 
 head_ "2. Endpoints /v1 e /v2"
@@ -97,6 +111,12 @@ for v in v1 v2; do
 done
 
 head_ "3. Falha ~50% em /v1 (10 tentativas)"
+# A faixa e 2-8, nao 3-7. O CHECKOUT_MAX_SUCCESS_STREAK=3 forca falha depois de 3
+# sucessos seguidos, o que empurra a taxa REAL para ~53%, nao 50% — a cadeia de
+# Markov dos estados de streak da 0.533. Com n=10, a faixa 3-7 dispara falso
+# alarme em ~7% das execucoes, e um gate que grita a toa antes da live e pior que
+# gate nenhum. A faixa 2-8 continua pegando o que importa: failureRate=0 (da 0) e
+# failureRate=1 (da 10), que sao os erros reais de configuracao.
 before=$(curl -s "${API_URL}/v1/status" | jq -r .checkouts)
 failures=0
 for _ in $(seq 1 10); do
@@ -104,10 +124,10 @@ for _ in $(seq 1 10); do
     -H 'content-type: application/json' -d '{"productId":"MONITOR-240HZ","userId":"user-1"}')
   [ "$code" = "500" ] && failures=$((failures + 1))
 done
-if [ "$failures" -ge 3 ] && [ "$failures" -le 7 ]; then
-  ok "$failures/10 falharam (tolerancia binomial 3-7)"
+if [ "$failures" -ge 2 ] && [ "$failures" -le 8 ]; then
+  ok "$failures/10 falharam (tolerancia 2-8; media real ~5.3 por causa do streak cap)"
 else
-  bad "$failures/10 falharam — fora da faixa 3-7; conferir CHECKOUT_FAILURE_RATE"
+  bad "$failures/10 falharam — fora da faixa 2-8; conferir CHECKOUT_FAILURE_RATE"
 fi
 
 head_ "4. Isolamento entre versoes"
@@ -132,7 +152,7 @@ head_ "6. Promtail e Loki"
 # seria pior que nao checar — por isso o estado PULADO aparece no resultado.
 if [ -n "$PROMTAIL_URL" ] && [ "$(curl -s -m 5 "${PROMTAIL_URL}/ready" 2>/dev/null)" = "Ready" ]; then
   ok "promtail /ready (via PROMTAIL_URL)"
-elif [ -f docker-compose.yml ] && command -v docker >/dev/null 2>&1 \
+elif [ "$DOCKER_LOCAL" = "yes" ] \
      && docker compose exec -T promtail wget -qO- localhost:9080/ready 2>/dev/null | grep -q Ready; then
   ok "promtail /ready (via docker compose exec)"
 else
@@ -141,6 +161,20 @@ fi
 
 labels=$(curl -s ${loki_auth[@]+"${loki_auth[@]}"} "${LOKI_URL}/loki/api/v1/label/job/values" | jq -r '.data[]?' | tr '\n' ' ')
 echo "$labels" | grep -q 'api' && ok "Loki conhece o label job=api" || bad "Loki nao tem job=api (labels: ${labels:-nenhum})"
+
+if [ -n "$LOKI_USER" ]; then
+  code=$(curl -s -o /dev/null -w '%{http_code}' "${LOKI_URL}/ready")
+  [ "$code" = "401" ] && ok "Loki sem credencial = 401 (basic-auth ativo)" \
+    || bad "Loki sem credencial = $code — esperado 401; O LOKI ESTA ABERTO"
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${LOKI_URL}/loki/api/v1/push" \
+    -H 'content-type: application/json' \
+    -d "{\"streams\":[{\"stream\":{\"job\":\"smoke-push-test\"},\"values\":[[\"$(date +%s)000000000\",\"deve ser barrado\"]]}]}")
+  [ "$code" = "401" ] && ok "push anonimo no Loki = 401" \
+    || bad "push anonimo no Loki = $code — QUALQUER UM PODE ENVENENAR OS LOGS"
+else
+  skip "basic-auth do Loki — LOKI_USER nao definido (uso local)"
+fi
 
 head_ "7. GATE CRITICO — queries do AGENTE.md"
 # Gera trafego fresco em /v2 e garante ao menos uma falha
@@ -178,9 +212,19 @@ n=$(loki_lines "{job=\"api\"} | json | correlationId=\"$CID\"")
 [ "$n" = "2" ] && ok "correlationId $CID -> exatamente 2 linhas (inicio + falha)" \
   || bad "correlationId $CID -> $n linhas (esperado 2)"
 
-head_ "10. Frontend e Grafana"
-hits=$(curl -s "${WEB_URL}" | grep -c HOSTMASTER)
-[ "$hits" -ge 1 ] && ok "dashboard responde e contem HOSTMASTER" || bad "dashboard sem HOSTMASTER"
+head_ "10. Loja publica e noindex"
+body=$(curl -s "${WEB_URL}/")
+echo "$body" | grep -q 'HOSTMASTER' && ok "loja responde e contem HOSTMASTER" || bad "loja sem HOSTMASTER"
+echo "$body" | grep -q 'Comprar'    && ok "loja tem botao Comprar"           || bad "loja sem botao Comprar"
+echo "$body" | grep -q 'Logs recentes' \
+  && bad "a loja esta mostrando 'Logs recentes' — isso e do painel" \
+  || ok "loja NAO mostra logs (visao do cliente)"
+
+curl -s "${WEB_URL}/robots.txt" | grep -q 'Disallow: /' \
+  && ok "robots.txt com Disallow: /" || bad "robots.txt sem Disallow: /"
+
+curl -sI "${WEB_URL}/" | grep -qi 'x-robots-tag: *noindex' \
+  && ok "header X-Robots-Tag: noindex" || bad "sem header X-Robots-Tag"
 
 code=$(curl -s -o /dev/null -w '%{http_code}' "${WEB_URL}/api/proxy/v2/health")
 [ "$code" = "200" ] && ok "proxy do Next -> API = 200" || bad "proxy do Next -> API = $code"
@@ -190,6 +234,67 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/api/health")
 
 ds=$(curl -s "${GRAFANA_URL}/api/datasources" | jq -r '.[0].type' 2>/dev/null)
 [ "$ds" = "loki" ] && ok "datasource Loki provisionado" || bad "datasource Loki ausente (got: ${ds:-nada})"
+
+head_ "11. Autenticacao do painel"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${WEB_URL}/login")
+[ "$code" = "200" ] && ok "GET /login = 200" || bad "GET /login = $code"
+
+redirect=$(curl -s -o /dev/null -w '%{redirect_url}' "${WEB_URL}/dashboard")
+case "$redirect" in
+  */login*) ok "/dashboard sem cookie redireciona para /login" ;;
+  *)        bad "/dashboard sem cookie foi para '${redirect:-lugar nenhum}' — O PAINEL ESTA ABERTO" ;;
+esac
+
+# Cookie forjado tem que ser barrado pela BARREIRA (app/dashboard/layout.tsx),
+# nao pelo middleware — que so olha a presenca do cookie.
+redirect=$(curl -s -o /dev/null -H 'Cookie: hostmaster_session=forjado-nao-existe' \
+  -w '%{redirect_url}' "${WEB_URL}/dashboard")
+case "$redirect" in
+  */login*) ok "cookie forjado barrado pela validacao no banco" ;;
+  *)        bad "cookie forjado NAO foi barrado — a barreira nao esta validando" ;;
+esac
+
+if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
+  jar=$(mktemp)
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${WEB_URL}/api/auth/login" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg e "$ADMIN_EMAIL" '{email:$e,password:"senha-propositalmente-errada"}')")
+  [ "$code" = "401" ] && ok "login com senha errada = 401" || bad "login com senha errada = $code"
+
+  code=$(curl -s -c "$jar" -o /dev/null -w '%{http_code}' -X POST "${WEB_URL}/api/auth/login" \
+    -H 'content-type: application/json' \
+    -d "$(jq -nc --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" '{email:$e,password:$p}')")
+  [ "$code" = "200" ] && ok "login correto = 200" || bad "login correto = $code"
+
+  grep -q 'hostmaster_session' "$jar" \
+    && ok "cookie de sessao devolvido" || bad "login nao devolveu cookie de sessao"
+
+  dash=$(curl -s -b "$jar" -w '\n%{http_code}' "${WEB_URL}/dashboard")
+  code=$(echo "$dash" | tail -1)
+  [ "$code" = "200" ] && ok "/dashboard com cookie = 200" || bad "/dashboard com cookie = $code"
+  echo "$dash" | grep -q 'Logs recentes' \
+    && ok "/dashboard contem 'Logs recentes'" || bad "/dashboard sem 'Logs recentes'"
+
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "${WEB_URL}/api/dashboard/users" \
+    -H 'content-type: application/json' \
+    -d '{"email":"invasor@exemplo.com","name":"Invasor","password":"senha-comprida-123"}')
+  [ "$code" = "401" ] && ok "POST /api/dashboard/users sem cookie = 401" \
+    || bad "POST /api/dashboard/users sem cookie = $code — o handler nao revalida"
+
+  rm -f "$jar"
+else
+  skip "login — ADMIN_EMAIL/ADMIN_PASSWORD nao definidos"
+fi
+
+head_ "12. A API continua ABERTA (restricao inviolavel)"
+code=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/v2/health")
+[ "$code" = "200" ] && ok "GET /v2/health sem credencial = 200" \
+  || bad "GET /v2/health = $code — a auth vazou para a API e a demo morre"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' "${API_URL}/v2/logs?limit=1")
+[ "$code" = "200" ] && ok "GET /v2/logs sem credencial = 200" \
+  || bad "GET /v2/logs = $code — a auth vazou para a API"
 
 head_ "Resultado"
 printf '  %d passaram, %d falharam, %d pulados\n\n' "$PASS" "$FAIL" "$SKIP"

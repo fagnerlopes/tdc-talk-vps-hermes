@@ -28,36 +28,67 @@ O ponto que costuma quebrar em setups assim é a ponte entre a aplicação e o c
 ## Subir a stack
 
 ```bash
-cp .env.example .env        # opcional: os defaults do compose já funcionam
+cp .env.example .env        # os defaults do compose funcionam, MENOS LOKI_BASIC_AUTH_B64
 docker compose up -d
 ```
 
+**`LOKI_BASIC_AUTH_B64` é obrigatória** — sem ela o container `loki-auth` aborta de
+propósito, para o Loki nunca subir aberto por engano. Para desenvolver:
+
+```bash
+printf 'LOKI_BASIC_AUTH_B64=%s\n' \
+  "$(printf '%s' "hermes:$(openssl passwd -apr1 'senha-local')" | base64 -w0)" >> .env
+```
+
+**As portas não são publicadas.** O compose de produção não tem um único `ports:`;
+todo acesso externo passa pelo Traefik do Coolify. Para desenvolver localmente,
+crie um `docker-compose.override.yml` (já no `.gitignore`) reintroduzindo as portas —
+ver [DEPLOY.md](DEPLOY.md#portas--todas-fechadas).
+
 Levar ~30s. O container da API roda `prisma migrate deploy` e o seed idempotente no start (`SEED_ON_BOOT=true`), então **não é preciso rodar seed na mão**.
 
-| Serviço | URL local | Para quê |
-|---|---|---|
-| Dashboard HOSTMASTER | http://localhost:3000 | a tela projetada na talk |
-| API | http://localhost:3001 | endpoints `/v1` e `/v2` |
-| Loki | http://localhost:3100 | API de query — é aqui que o Hermes vai |
-| Grafana | http://localhost:3300 | Explore com datasource Loki já provisionado, sem login |
-| Promtail | http://localhost:9080 | `/ready` para liveness |
-| Postgres | localhost:5432 | `dev_user` / `dev123` / `hermes_demo` |
+| Serviço | URL local (com override) | Produção | Para quê |
+|---|---|---|---|
+| Loja | http://localhost:3000 | https://hostmaster.fagnerlopes.dev | a tela projetada na talk |
+| Painel | http://localhost:3000/dashboard | https://hostmaster.fagnerlopes.dev/dashboard | stats, logs e controles — **exige login** |
+| API | http://localhost:3001 | https://api.hostmaster.fagnerlopes.dev | endpoints `/v1` e `/v2`, sem autenticação |
+| Loki (cru) | http://localhost:3100 | — | sem domínio; só a rede interna fala com ele |
+| Loki (auth) | http://localhost:3101 | https://loki.hostmaster.fagnerlopes.dev | é aqui que o Hermes vai — **exige `-u`** |
+| Grafana | http://localhost:3300 | https://grafana.hostmaster.fagnerlopes.dev | Explore com datasource Loki, sem login |
+| Promtail | http://localhost:9080 | — | `/ready` para liveness, só de dentro |
+| Postgres | localhost:5432 | — | `dev_user` / `dev123` / `hermes_demo` |
 
-**Loki não tem UI.** `http://localhost:3100/` retorna 404 — isso é normal. Para olhar log com os olhos, use o **Grafana em :3300**. Para liveness do Loki, use `/ready`.
+**Loki não tem UI.** A raiz dele retorna 404 — isso é normal. Para olhar log com os olhos, use o **Grafana**. Para liveness, use `/ready`.
+
+**O painel exige login.** O primeiro admin nasce no seed: defina `ADMIN_EMAIL` e
+`ADMIN_PASSWORD`, ou deixe `ADMIN_PASSWORD` vazia e o seed gera 24 caracteres,
+imprimindo uma única vez — recuperável com `docker compose logs api`.
 
 ## Verificar que está tudo certo
 
 ```bash
-./scripts/smoke.sh        # 23 checagens ponta a ponta; sai != 0 se algo falhar
+npm test                  # vitest — hash de senha e politica de sessao
+./scripts/smoke.sh        # sai != 0 se algo falhar; "pulados" nao sao falha
 ./scripts/reset-demo.sh   # volta v1 e v2 ao baseline e asserta o resultado
 ```
 
-Contra um host remoto:
+Localmente, aponte o Loki para o proxy autenticado (`3101`):
 
 ```bash
-API_URL=https://vps70013.publiccloud.com.br:3001 WEB_URL=https://vps70013.publiccloud.com.br \
-LOKI_URL=https://vps70013.publiccloud.com.br:3100 ./scripts/smoke.sh
+LOKI_URL=http://localhost:3101 LOKI_USER=hermes LOKI_PASS='senha-local' ./scripts/smoke.sh
 ```
+
+Contra produção:
+
+```bash
+API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
+LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
+LOKI_USER=hermes LOKI_PASS='<senha>' \
+ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' ./scripts/smoke.sh
+```
+
+As checagens que dependem de `docker compose` (contagem de containers, `/ready` do
+Promtail) são **puladas** quando o alvo é remoto — elas inspecionariam a stack errada.
 
 ## Endpoints
 

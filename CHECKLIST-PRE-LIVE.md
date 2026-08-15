@@ -3,15 +3,16 @@
 Uma hora antes da live. A maior parte disto está automatizada:
 
 ```bash
-./scripts/smoke.sh          # 23 checagens; sai != 0 se algo falhar
+./scripts/smoke.sh          # sai != 0 se algo falhar; "pulados" nao sao falha
 ./scripts/reset-demo.sh     # baseline + assert
 ```
 
 Contra a VPS:
 ```bash
-API_URL=http://vps70013.publiccloud.com.br:3001 WEB_URL=http://vps70013.publiccloud.com.br:3000 \
-LOKI_URL=http://vps70013.publiccloud.com.br:3100 PROMTAIL_URL=http://vps70013.publiccloud.com.br:9080 \
-GRAFANA_URL=http://vps70013.publiccloud.com.br:3300 ./scripts/smoke.sh
+API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
+LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
+LOKI_USER=hermes LOKI_PASS='<senha>' \
+ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' ./scripts/smoke.sh
 ```
 
 O que segue abaixo é a versão manual, para quando você quiser olhar com os próprios olhos.
@@ -22,8 +23,10 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
   ```bash
   docker compose up -d
   docker compose ps --services --filter status=running
-  # Esperado: api, grafana, loki, postgres, promtail, web
+  # Esperado 7: api, grafana, loki, loki-auth, postgres, promtail, web
   ```
+  **Isto só roda na VPS.** Nenhuma porta é publicada no host, então de fora não há
+  como inspecionar containers — o smoke test PULA esta checagem quando o alvo é remoto.
   Use `--services --filter status=running`, não `--format '{{.Service}}'` — versões antigas do compose não entendem o segundo.
 
 - [ ] Banco populado — **o seed roda sozinho no boot** (`SEED_ON_BOOT=true`). Para rodar na mão:
@@ -34,6 +37,9 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
   `npm run seed` na raiz faz exatamente isso. **Não** existe `npm run seed` cru na VPS — lá não há `node_modules` nem `DATABASE_URL` no host.
 
 ## Endpoints /v1 (ensaio)
+
+Os `curl` abaixo usam `localhost:3001`, o que só funciona **de dentro da VPS** (ou
+com a stack local de pé). De fora, troque por `https://api.hostmaster.fagnerlopes.dev`.
 
 - [ ] `GET /v1/health` = 200
   ```bash
@@ -54,7 +60,9 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
       -H 'content-type: application/json' \
       -d '{"productId":"MONITOR-240HZ","userId":"user-1"}'
   done; echo
-  # Esperado: entre 3 e 7 respostas 500 (tolerância binomial)
+  # Esperado: entre 2 e 8 respostas 500
+  # (a media real e ~5.3, nao 5: o CHECKOUT_MAX_SUCCESS_STREAK=3 forca falha
+  #  depois de 3 sucessos seguidos e empurra a taxa para ~53%)
   ```
 
 - [ ] `POST /v1/simulate-crash` funciona
@@ -76,9 +84,9 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
 
 ## Logs e Loki
 
-- [ ] Promtail vivo:
+- [ ] Promtail vivo — **só de dentro da VPS**, ele não tem domínio:
   ```bash
-  curl -s http://localhost:9080/ready     # Ready
+  docker compose exec promtail wget -qO- localhost:9080/ready     # Ready
   ```
 
 - [ ] A API está escrevendo no arquivo que o Promtail lê:
@@ -86,15 +94,21 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
   docker compose exec api tail -2 /var/log/app/api.log
   ```
 
-- [ ] Loki conhece o stream:
+- [ ] Loki conhece o stream — **todo `curl` ao Loki precisa de `-u`**:
   ```bash
-  curl -s http://localhost:3100/loki/api/v1/label/job/values | jq -r '.data[]'
-  # Esperado: api
+  LOKI=https://loki.hostmaster.fagnerlopes.dev
+  curl -s -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/label/job/values" | jq -r '.data[]'
+  # Esperado: api  (e SO api — qualquer job a mais = alguem escreveu de fora)
+  ```
+
+- [ ] O Loki continua fechado para anônimos:
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' "$LOKI/ready"   # 401
   ```
 
 - [ ] **A query do AGENTE.md retorna dados** — esta é a checagem que decide a talk:
   ```bash
-  curl -sG http://localhost:3100/loki/api/v1/query_range \
+  curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
     --data-urlencode 'query={job="api"} | json | level="error"' \
     --data-urlencode 'limit=20' | jq '[.data.result[].values[]] | length'
   # Esperado: > 0
@@ -103,43 +117,54 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
 
 - [ ] Os 8 campos obrigatórios estão na linha:
   ```bash
-  curl -sG http://localhost:3100/loki/api/v1/query_range \
+  curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
     --data-urlencode 'query={job="api"} | json | level="error"' \
     --data-urlencode 'limit=1' \
   | jq -r '.data.result[0].values[0][1] | fromjson | keys | join(",")'
   # Deve conter: level, timestamp, correlationId, service, endpoint, productId, reason, message
   ```
 
-- [ ] Ver os logs com os olhos: **Grafana em http://localhost:3300** → Explore → datasource Loki → `{job="api"}`.
-  **O Loki não tem UI.** `http://localhost:3100/` retorna 404 — isso é esperado. Para liveness do Loki use `/ready`.
+- [ ] Ver os logs com os olhos: **Grafana em https://grafana.hostmaster.fagnerlopes.dev** → Explore → datasource Loki → `{job="api"}`.
+  **O Loki não tem UI**, e a raiz dele retorna 404 — isso é esperado. Para liveness use `/ready`.
+  O Grafana fala com o Loki pela rede interna e **não** passa pelo basic-auth.
 
 ## Frontend
 
-- [ ] http://localhost:3000 carrega o dashboard HOSTMASTER
-- [ ] Sidebar com Home, Produtos, Pedidos, Analytics, Settings
+- [ ] `https://hostmaster.fagnerlopes.dev` carrega a **loja**
+- [ ] Sidebar com Loja, Painel e Usuários (links reais) + itens decorativos
 - [ ] 5 cards de produto com botão "Comprar [Nome]"
-- [ ] Painel "Logs recentes" à direita
+- [ ] A loja **não** mostra stats, logs nem controles — é a visão do cliente
 - [ ] Clique em "Comprar":
   - [ ] 200 → toast verde com o `orderId`
-  - [ ] 500 → toast vermelho com o `reason` **e o `correlationId`**
-  - [ ] "Logs recentes" atualiza em ≤ 2s
-  - [ ] Clicar no chip do `correlationId` copia o valor
+  - [ ] 500 → toast vermelho **"Não foi possível concluir o pagamento"** + **código de referência**
+  - [ ] O `reason` técnico **não** aparece na loja — é o que o Hermes vai descobrir
+  - [ ] Clicar no chip do código copia o valor
+
+- [ ] `https://hostmaster.fagnerlopes.dev/dashboard` sem cookie redireciona para `/login`
+- [ ] Login com o admin funciona e o painel abre
+- [ ] O painel tem stats, "Logs recentes" e o `<details>` de Controles de demo **fechado**
+- [ ] "Logs recentes" atualiza em ≤ 2s após um clique na loja
+- [ ] `/dashboard/usuarios` lista os admins
+- [ ] **Faça login antes da talk** — a sessão dura 12h; expirar no palco custa caro
 
 ## Hermes
 
 - [ ] O Hermes alcança a API pública:
   ```bash
-  curl -s http://vps70013.publiccloud.com.br:3001/v2/health
+  curl -s https://api.hostmaster.fagnerlopes.dev/v2/health
   ```
 - [ ] O Hermes alcança o Loki público:
   ```bash
-  curl -sG http://vps70013.publiccloud.com.br:3100/loki/api/v1/query_range \
+  curl -sG https://loki.hostmaster.fagnerlopes.dev/loki/api/v1/query_range \
     --data-urlencode 'query={job="api"} | json' --data-urlencode 'limit=5'
   ```
 - [ ] **[AGENTE.md](AGENTE.md) está com as URLs públicas reais**, não `localhost` — o Hermes roda fora da VPS
 - [ ] Bot do Telegram configurado, chat ID correto, mensagem de teste entregue
 
 ## Dados
+
+Os comandos `psql` abaixo só rodam **na VPS**: a 5432 foi fechada e não é mais
+alcançável de fora.
 
 - [ ] Produtos:
   ```bash
@@ -156,14 +181,17 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
 
 - [ ] Health responde em < 1s:
   ```bash
-  time curl -s http://localhost:3001/v2/health > /dev/null
+  time curl -s https://api.hostmaster.fagnerlopes.dev/v2/health > /dev/null
   ```
 - [ ] Log chega ao Loki em < 5s:
   ```bash
-  CID=$(curl -s -X POST http://localhost:3001/v2/checkout -H 'content-type: application/json' \
+  API=https://api.hostmaster.fagnerlopes.dev
+  LOKI=https://loki.hostmaster.fagnerlopes.dev
+
+  CID=$(curl -s -X POST "$API/v2/checkout" -H 'content-type: application/json' \
     -d '{"productId":"MONITOR-240HZ","forceFailure":true}' | jq -r .correlationId)
   sleep 4
-  curl -sG http://localhost:3100/loki/api/v1/query_range \
+  curl -sG -u "$LOKI_USER:$LOKI_PASS" "$LOKI/loki/api/v1/query_range" \
     --data-urlencode "query={job=\"api\"} | json | correlationId=\"$CID\"" \
   | jq '[.data.result[].values[]] | length'
   # Esperado: 2
@@ -188,13 +216,16 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
 - [ ] [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) aberto numa aba
 - [ ] [AGENTE.md](AGENTE.md) com URLs públicas
 - [ ] [README.md](README.md) e [PRD.md](PRD.md) acessíveis
+- [ ] `LOKI_USER`/`LOKI_PASS` e `ADMIN_EMAIL`/`ADMIN_PASSWORD` à mão (gerenciador de senhas)
 
 ## Tela e canais
 
 - [ ] OBS / compartilhamento em 1920×1080, áudio OK
 - [ ] Dashboard visível sem zoom excessivo
 - [ ] Aba do Telegram aberta
-- [ ] Aba do **Grafana (:3300)** aberta no Explore — não `:3100`, que não tem UI
+- [ ] Aba do **Grafana** aberta no Explore — o Loki não tem UI
+- [ ] Aba do **painel** aberta e **já logada** (sessão de 12h)
+- [ ] `<details>` "Controles de demo" **fechado**
 - [ ] Terminal aberto com os `curl` de emergência à mão
 
 ## Plano B
@@ -222,10 +253,10 @@ echo "=== Pronto. Boa live ==="
 | Ação | Comando / URL |
 |---|---|
 | Dashboard | http://\<HOST\>:3000 |
-| Health da API | `curl http://vps70013.publiccloud.com.br:3001/v2/health` |
+| Health da API | `curl https://api.hostmaster.fagnerlopes.dev/v2/health` |
 | Ver logs (humano) | http://\<HOST\>:3300 → Explore |
 | Simular erro | clicar em "Comprar" no dashboard |
-| **Garantir que o próximo clique falha** | `curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' -d '{"forceNextOutcome":"fail"}'` |
-| Derrubar o health | `curl -X POST http://vps70013.publiccloud.com.br:3001/v2/simulate-crash` |
+| **Garantir que o próximo clique falha** | `curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/config -H 'content-type: application/json' -d '{"forceNextOutcome":"fail"}'` |
+| Derrubar o health | `curl -X POST https://api.hostmaster.fagnerlopes.dev/v2/simulate-crash` |
 | Voltar ao baseline | `./scripts/reset-demo.sh` |
 | Reiniciar a stack | `docker compose down && docker compose up -d` (**sem `-v`**) |

@@ -16,12 +16,14 @@ Monorepo (NPM Workspaces)
 ├── apps/api           (Fastify: Endpoints /v1 e /v2)
 └── packages/database  (Prisma: ORM + Seed)
 
-Docker Compose Stack
+Docker Compose Stack (nenhuma porta publicada — tudo pelo Traefik do Coolify)
 ├── PostgreSQL (volume persistente)
-├── API (port 3001, logs JSON → stdout)
-├── Web (port 3000)
-├── Promtail (coleta logs)
-└── Loki (port 3100, API REST para Hermes)
+├── API      → api.hostmaster.fagnerlopes.dev       (logs JSON → arquivo + stdout)
+├── Web      → hostmaster.fagnerlopes.dev           (loja em /, painel em /dashboard)
+├── Promtail (coleta logs; sem dominio, nada externo precisa)
+├── Loki     (API REST para o Hermes; sem dominio proprio)
+├── Loki-auth→ loki.hostmaster.fagnerlopes.dev      (basic-auth na frente do Loki)
+└── Grafana  → grafana.hostmaster.fagnerlopes.dev
 ```
 
 ## **Endpoints (OBRIGATÓRIOS)**
@@ -78,6 +80,37 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 - Checkout real (só simula)
 - Integração com métodos de pagamento
 
+## **Rotas e autenticação**
+
+| Rota | Acesso | Conteúdo |
+|---|---|---|
+| `/` | pública | Loja HOSTMASTER — produtos e botão "Comprar" |
+| `/login` | pública | e-mail + senha |
+| `/dashboard` | protegida | stats, logs recentes, controles de demo |
+| `/dashboard/usuarios` | protegida | listar, criar e remover admins |
+
+**O painel tem autenticação de sessão real.** Isso **sobrescreve deliberadamente** a
+linha original deste arquivo que dizia "Não precisa de: Autenticação real" e o item
+"Autenticação complexa" da lista do que não fazer. A decisão foi tomada **depois** do
+deploy, quando a exposição real ficou visível: o Loki aceitava `push` anônimo (HTTP
+204 confirmado) e a 5432 respondia com `dev_user`/`dev123`, credenciais que estão
+neste repositório público. O design completo está em
+[docs/superpowers/specs/2026-08-15-auth-e-dominio-design.md](docs/superpowers/specs/2026-08-15-auth-e-dominio-design.md).
+
+**Não remova a autenticação achando que é escopo indevido. Ela é o escopo.**
+
+Restrições que continuam valendo, e que a auth não pode violar:
+
+- **A API não autentica.** `/vN/*` fica aberto para o Hermes — é o que mantém a
+  observabilidade agnóstica. Se a auth encostar nesses endpoints, a demo morre.
+- **O Loki autentica**, mas por um proxy (`loki-auth`), não na aplicação. O Loki
+  continua com `auth_enabled: false`; o Hermes só precisa de `curl -u`.
+- **A barreira é `app/dashboard/layout.tsx`** (`requireSession()`), **não** o
+  `middleware.ts` — o middleware roda no Edge, não alcança o Prisma e faz só o
+  atalho barato de cookie ausente. Um cookie forjado passa por ele.
+- **Hash com `scrypt` do `node:crypto`.** Nada de bcrypt/argon2: exigem compilação
+  nativa e o build roda numa VPS pequena.
+
 ## **Dados (Seed)**
 
 **Script:** `packages/database/seed.ts`  
@@ -105,69 +138,42 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 
 ## **Docker Compose**
 
-**Arquivo:** `docker-compose.yml` (raiz do monorepo)  
-**Serviços:**
+**Arquivo:** `docker-compose.yml` (raiz do monorepo)
 
-```yaml
-services:
-  postgres:
-    image: postgres:16
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      POSTGRES_PASSWORD: dev123
-      POSTGRES_USER: dev_user
-      POSTGRES_DB: hermes_demo
+Sete serviços: `postgres`, `api`, `web`, `loki`, `loki-auth`, `promtail`, `grafana`.
 
-  api:
-    build: ./apps/api
-    ports:
-      - "3001:3001"
-    depends_on:
-      - postgres
-    environment:
-      DATABASE_URL: postgresql://dev_user:dev123@postgres:5432/hermes_demo
-      LOG_LEVEL: info
+**Nenhum serviço publica porta no host.** Todo acesso externo entra pelo Traefik do
+Coolify nos domínios `*.hostmaster.fagnerlopes.dev`. Ver [DEPLOY.md](DEPLOY.md).
+Para desenvolver localmente, use o `docker-compose.override.yml` (gitignored), que
+reintroduz as portas.
 
-  web:
-    build: ./apps/web
-    ports:
-      - "3000:3000"
-    depends_on:
-      - api
+Duas coisas que **não** devem ser desfeitas:
 
-  promtail:
-    image: grafana/promtail:latest
-    volumes:
-      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yml
-    command: -config.file=/etc/promtail/config.yml
-
-  loki:
-    image: grafana/loki:latest
-    ports:
-      - "3100:3100"
-    volumes:
-      - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml
-    command: -config.file=/etc/loki/local-config.yaml
-
-volumes:
-  postgres_data:
-```
+- `loki`, `promtail`, `grafana` e `loki-auth` usam `build:` com Dockerfiles em
+  `monitoring/`, levando o config dentro da imagem. O Coolify reescreve bind mounts
+  relativos e o container morre com "not a directory". **Não volte para `image:` +
+  bind mount.**
+- Não tente fechar porta com `ufw`: o Docker insere regra de DNAT na chain `DOCKER`,
+  avaliada antes do `ufw`. Fechar de verdade é não ter `ports:`.
 
 ## **Checklist de Implementação**
 
-- [ ] Monorepo + workspaces
-- [ ] Fastify API com Pino (logs JSON)
-- [ ] Endpoints /v1 e /v2 completos
-- [ ] POST /checkout com falha 50%, loga erro estruturado
-- [ ] Next.js com dashboard HOSTMASTER
-- [ ] Botão "Comprar [Produto]" funcional
-- [ ] Painel "Logs Recentes"
-- [ ] Prisma + seed de dados fictícios
-- [ ] Docker-compose completo (Postgres, API, Web, Promtail, Loki)
-- [ ] Testes manuais (endpoints, logs chegando no Loki)
-- [ ] AGENTE.md criado
-- [ ] Pronto para deploy no Coolify (segunda 18h)
+- [x] Monorepo + workspaces
+- [x] Fastify API com Pino (logs JSON)
+- [x] Endpoints /v1 e /v2 completos
+- [x] POST /checkout com falha 50%, loga erro estruturado
+- [x] Next.js com dashboard HOSTMASTER
+- [x] Botão "Comprar [Produto]" funcional
+- [x] Painel "Logs Recentes"
+- [x] Prisma + seed de dados fictícios
+- [x] Docker-compose completo (Postgres, API, Web, Promtail, Loki)
+- [x] Testes manuais (endpoints, logs chegando no Loki)
+- [x] AGENTE.md criado
+- [x] Pronto para deploy no Coolify (segunda 18h)
+- [x] Domínios com TLS, portas cruas fechadas, basic-auth no Loki
+- [x] Split loja/painel, controles de demo, noindex
+- [x] Autenticação de sessão no painel + gestão de admins
+- [x] `npm test` (vitest) cobrindo hash e sessão
 
 ## **Importante: O Que NÃO Fazer**
 

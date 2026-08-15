@@ -150,8 +150,8 @@ A solução é o serviço `loki-auth` — um nginx de ~20 linhas que faz o basic
 
 | valor no `.env` | o que chega no container |
 |---|---|
-| `hermes:$apr1$Nqc9VQaU$EteDq...` | `hermes:$apr1qc9VQaUteDq...` (comeu os `$X`) |
-| `hermes:$$apr1$$Nqc9VQaU$$EteDq...` | `hermes:$$apr1$qc9VQaU$teDq...` (outro estrago) |
+| `hermes:$apr1$EXEMPLOsl$FaKeH...` | `hermes:$apr1XEMPLOslaKeH...` (comeu os `$X`) |
+| `hermes:$$apr1$$EXEMPLOsl$$FaKeH...` | `hermes:$$apr1$XEMPLOsl$aKeH...` (outro estrago) |
 | base64 | intacto |
 
 Base64 usa só `[A-Za-z0-9+/=]`, atravessa Compose e Coolify sem alteração. Gerar:
@@ -223,7 +223,7 @@ O `loki-auth` sobe local em `3101` (o `3100` fica com o Loki cru), então o smok
 
 ## Depois do deploy
 
-1. ✅ Smoke test do laptop contra as URLs públicas — **23/23**:
+1. ✅ Smoke test do laptop contra as URLs públicas — **sem falhas**:
    ```bash
    API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
    LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \

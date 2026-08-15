@@ -7,9 +7,9 @@
 #
 # POR QUE BASE64: o hash htpasswd e cheio de `$` (`hermes:$apr1$sal$hash`), e o
 # `$` nao sobrevive a interpolacao do Docker Compose. Testado: passando o hash
-# cru, `hermes:$apr1$Nqc9VQaU$EteDq...` chega no container como
-# `hermes:$apr1qc9VQaUteDq...` — o Compose come os `$X`. Escapar com `$$` no
-# .env produz outro estrago (`$$apr1$qc9...`). Base64 usa so [A-Za-z0-9+/=],
+# cru, `hermes:$apr1$EXEMPLOsl$FaKeH...` chega no container como
+# `hermes:$apr1XEMPLOslaKeH...` — o Compose come os `$X`. Escapar com `$$` no
+# .env produz outro estrago (`$$apr1$XEMPLOsl$aKeH...`). Base64 usa so [A-Za-z0-9+/=],
 # nao tem `$`, e atravessa Compose e Coolify intacto.
 #
 # Gerar o valor:
