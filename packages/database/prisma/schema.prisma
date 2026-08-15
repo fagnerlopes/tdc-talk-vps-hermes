@@ -1,0 +1,50 @@
+// Schema da demo TDC — e-commerce HOSTMASTER
+// IDs de produto sao IDs de negocio (nao cuid): batem com os exemplos do AGENTE.md,
+// para o Hermes conseguir cruzar uma linha do Loki com um registro do banco.
+
+generator client {
+  provider      = "prisma-client-js"
+  output        = "../generated/client"
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Product {
+  id     String  @id // "MONITOR-240HZ"
+  name   String
+  price  Float // Float, nao Decimal: Decimal serializa como {s,e,d} em JSON
+  stock  Int     @default(100)
+  orders Order[]
+
+  @@map("products")
+}
+
+model User {
+  id     String  @id @default(cuid())
+  email  String  @unique
+  name   String
+  orders Order[]
+
+  @@map("users")
+}
+
+model Order {
+  id            String   @id // "ORD-7F3A21"
+  productId     String
+  userId        String
+  amount        Float
+  status        String // "PAID" | "FAILED"
+  correlationId String
+  createdAt     DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([correlationId])
+  @@index([status])
+  @@map("orders")
+}

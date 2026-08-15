@@ -1,0 +1,103 @@
+# Stack da demo TDC — HOSTMASTER + Hermes
+#
+# `app_logs` e o volume que liga API e Promtail. Esse era o ponto exato onde o
+# compose da spec original falhava: o Promtail nao tinha acesso a log nenhum.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-dev_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev123}
+      POSTGRES_DB: ${POSTGRES_DB:-hermes_demo}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dev_user} -d ${POSTGRES_DB:-hermes_demo}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://dev_user:dev123@postgres:5432/hermes_demo}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      LOG_FILE: ${LOG_FILE:-/var/log/app/api.log}
+      PORT: "3001"
+      CHECKOUT_FAILURE_RATE: ${CHECKOUT_FAILURE_RATE:-0.5}
+      CHECKOUT_MAX_SUCCESS_STREAK: ${CHECKOUT_MAX_SUCCESS_STREAK:-3}
+      SEED_ON_BOOT: ${SEED_ON_BOOT:-true}
+    volumes:
+      - app_logs:/var/log/app
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    environment:
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3001}
+
+  loki:
+    image: grafana/loki:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml:ro
+      # volume NOMEADO, nao bind mount — ver comentario em loki-config.yaml
+      - loki_data:/loki
+
+  promtail:
+    image: grafana/promtail:3.1.1
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    ports:
+      - "9080:9080"
+    depends_on:
+      - loki
+    volumes:
+      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yml:ro
+      - app_logs:/var/log/app:ro
+      - promtail_positions:/promtail
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    restart: unless-stopped
+    ports:
+      - "3300:3000"
+    depends_on:
+      - loki
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_FEATURE_TOGGLES_ENABLE: ""
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  postgres_data:
+  app_logs:
+  loki_data:
+  promtail_positions:
+  grafana_data:

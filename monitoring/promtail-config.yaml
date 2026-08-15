@@ -1,0 +1,41 @@
+# Promtail — coleta o arquivo JSON do Pino e empurra para o Loki.
+#
+# UM label de stream, e so um: job=api.
+#
+# Por que nenhum pipeline stage:
+#
+# 1. COLISAO DE LABEL. No LogQL, quando o parser `json` extrai uma chave que
+#    colide com um label de stream existente, o Loki renomeia a extraida para
+#    `<chave>_extracted`. Promover `level` ou `endpoint` a label QUEBRARIA
+#    SILENCIOSAMENTE `{job="api"} | json | level="error"` — exatamente a query
+#    documentada no AGENTE.md. Um label entra; todo o resto e parseado em tempo
+#    de query.
+#
+# 2. SEM STAGE `timestamp`. Usar tempo de ingestao em vez de tempo do evento
+#    elimina toda a classe de rejeicao "sample too old / out of order" causada
+#    por clock skew entre containers. Numa demo de 20 min a diferenca e de
+#    milissegundos. Trade deliberado por confiabilidade.
+#
+# A linha em disco e JSON puro do Pino, sem envelope: o `| json` parseia direto,
+# sem stage `docker` nem `cri`.
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+  log_level: warn
+
+positions:
+  filename: /promtail/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+    batchwait: 1s
+
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets:
+          - localhost
+        labels:
+          job: api
+          __path__: /var/log/app/api.log
