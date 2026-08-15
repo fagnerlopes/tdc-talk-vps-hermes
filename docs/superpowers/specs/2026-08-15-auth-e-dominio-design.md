@@ -1,4 +1,4 @@
-# Design — Separação loja/admin, autenticação e domínio próprio
+# Design — Separação loja/dashboard, autenticação e domínio próprio
 
 **Data:** 2026-08-15 · **Status:** aguardando revisão
 
@@ -20,12 +20,12 @@ Este design resolve os três. Ele **sobrescreve deliberadamente** o [CLAUDE.md](
 
 ## 1. Rotas do frontend
 
-| Rota | Acesso | Conteúdo |
-|---|---|---|
-| `/` | pública | Loja HOSTMASTER — projetada no Ato 1 |
-| `/login` | pública | e-mail + senha |
-| `/admin` | protegida | stats, logs recentes, controles de demo |
-| `/admin/usuarios` | protegida | listar, criar e remover admins |
+| Rota                  | Acesso    | Conteúdo                                |
+| --------------------- | --------- | --------------------------------------- |
+| `/`                   | pública   | Loja HOSTMASTER — projetada no Ato 1    |
+| `/login`              | pública   | e-mail + senha                          |
+| `/dashboard`          | protegida | stats, logs recentes, controles de demo |
+| `/dashboard/usuarios` | protegida | listar, criar e remover admins          |
 
 A loja não tem stats, logs nem controles: é o que um cliente veria. O painel não tem cards de produto: é o que o operador olha. Essa separação é o que faz o Ato 1 ("loja de cliente falhando") e o Ato 2 ("dev investigando") serem cenas distintas, como o [RUNBOOK-LIVE.md](../../../RUNBOOK-LIVE.md) já narra.
 
@@ -35,7 +35,7 @@ Na sidebar, "Loja" e "Painel" viram links reais; os demais continuam decorativos
 
 ## 2. Controles de demo
 
-Dentro de `/admin`, num `<details>` **fechado por padrão**, em cinza e sem destaque visual.
+Dentro de `/dashboard`, num `<details>` **fechado por padrão**, em cinza e sem destaque visual.
 
 - `Forçar falha no próximo clique` / `Forçar sucesso`
 - `Disparar checkout com falha agora`
@@ -87,11 +87,11 @@ Vive em `packages/database/src/password.ts`, sem importar Prisma, para que o see
 
 ### Ponto de aplicação
 
-`app/admin/layout.tsx` chama `requireSession()`, que valida o cookie contra o banco e redireciona para `/login` se ausente, inválido ou expirado. **Este layout é a barreira** — toda rota sob `/admin/*` passa por ele.
+`app/dashboard/layout.tsx` chama `requireSession()`, que valida o cookie contra o banco e redireciona para `/login` se ausente, inválido ou expirado. **Este layout é a barreira** — toda rota sob `/dashboard/*` passa por ele.
 
 `middleware.ts` faz só o atalho barato: cookie ausente → redireciona sem tocar no banco. **O middleware não é a barreira**, porque roda no Edge e não alcança o Prisma. Registrar isso é importante: quem mexer depois não pode assumir que ele protege.
 
-Os route handlers `POST /api/admin/users` e `DELETE /api/admin/users/[id]` revalidam a sessão no servidor. Não confiam em a UI ter escondido o botão.
+Os route handlers `POST /api/dashboard/users` e `DELETE /api/dashboard/users/[id]` revalidam a sessão no servidor. Não confiam em a UI ter escondido o botão.
 
 ### Primeiro admin
 
@@ -101,7 +101,7 @@ TTL da sessão: `SESSION_TTL_HOURS`, default 12.
 
 ## 4. noindex
 
-Aplicado ao app inteiro, não só à loja — o `/admin` também não deve ser indexado. Três camadas porque cada uma cobre um caso distinto:
+Aplicado ao app inteiro, não só à loja — o `/dashboard` também não deve ser indexado. Três camadas porque cada uma cobre um caso distinto:
 
 - `metadata.robots = { index: false, follow: false }` no layout raiz → respostas HTML
 - `app/robots.ts` gerando `Disallow: /` → crawlers que consultam robots.txt
@@ -111,12 +111,12 @@ Aplicado ao app inteiro, não só à loja — o `/admin` também não deve ser i
 
 Quatro registros A em `fagnerlopes.dev` (DNS na Vercel), todos apontando para `177.153.35.27`. O apex continua servindo o site pessoal na Vercel e não é tocado.
 
-| Subdomínio | Serviço | Porta interna |
-|---|---|---|
-| `hostmaster.fagnerlopes.dev` | web | 3000 |
-| `api.hostmaster.fagnerlopes.dev` | api | 3001 |
-| `loki.hostmaster.fagnerlopes.dev` | loki | 3100 |
-| `grafana.hostmaster.fagnerlopes.dev` | grafana | 3000 |
+| Subdomínio                           | Serviço | Porta interna |
+| ------------------------------------ | ------- | ------------- |
+| `hostmaster.fagnerlopes.dev`         | web     | 3000          |
+| `api.hostmaster.fagnerlopes.dev`     | api     | 3001          |
+| `loki.hostmaster.fagnerlopes.dev`    | loki    | 3100          |
+| `grafana.hostmaster.fagnerlopes.dev` | grafana | 3000          |
 
 As portas 80 e 443 já estão abertas na VPS e o Traefik do Coolify responde nelas, então o desafio HTTP-01 do Let's Encrypt funciona assim que o DNS propagar.
 
@@ -129,6 +129,7 @@ Consequência no `smoke.sh`: o Promtail não ganha domínio (nada externo precis
 Basic-auth no Traefik, sobre TLS. Não depende do IP de saída da VPS do Hermes (que pode mudar) e a credencial não trafega em claro. O Hermes passa a usar `curl -u "$LOKI_USER:$LOKI_PASS"`. A senha vive em env var do Coolify e **nunca** no repositório.
 
 Dois caminhos internos que **não** passam pelo Traefik e portanto não são afetados:
+
 - Promtail → `http://loki:3100` (push)
 - Grafana → `http://loki:3100` (datasource)
 
@@ -156,13 +157,13 @@ Sem isso o `output: standalone` não rastreia os engines do Prisma, o container 
 
 Variáveis novas:
 
-| Variável | Serviço | Formato |
-|---|---|---|
-| `DATABASE_URL` | web | mesma string do serviço `api` |
-| `ADMIN_EMAIL` | api (seed) | e-mail do primeiro admin |
-| `ADMIN_PASSWORD` | api (seed) | se ausente, gera 24 chars e imprime no log |
-| `SESSION_TTL_HOURS` | web | inteiro, default `12` |
-| `LOKI_BASIC_AUTH` | loki (label do Traefik) | `usuario:$hash` no formato htpasswd, gerado com `htpasswd -nb`; os `$` viram `$$` no compose |
+| Variável            | Serviço                 | Formato                                                                                      |
+| ------------------- | ----------------------- | -------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`      | web                     | mesma string do serviço `api`                                                                |
+| `ADMIN_EMAIL`       | api (seed)              | e-mail do primeiro admin                                                                     |
+| `ADMIN_PASSWORD`    | api (seed)              | se ausente, gera 24 chars e imprime no log                                                   |
+| `SESSION_TTL_HOURS` | web                     | inteiro, default `12`                                                                        |
+| `LOKI_BASIC_AUTH`   | loki (label do Traefik) | `usuario:$hash` no formato htpasswd, gerado com `htpasswd -nb`; os `$` viram `$$` no compose |
 
 Migration nova: `admin_users` e `sessions`.
 
@@ -181,11 +182,11 @@ Migration nova: `admin_users` e `sessions`.
 O `smoke.sh` ganha:
 
 - `/` responde 200 e contém "Comprar"
-- `/admin` sem cookie redireciona para `/login`
+- `/dashboard` sem cookie redireciona para `/login`
 - `/login` responde 200
 - login com senha errada responde 401
 - login correto responde 200 e devolve cookie
-- `/admin` com cookie responde 200 e contém "Logs recentes"
+- `/dashboard` com cookie responde 200 e contém "Logs recentes"
 - `robots.txt` contém `Disallow: /`
 - as queries do AGENTE.md continuam passando pela URL nova do Loki, com `-u`
 
@@ -193,27 +194,27 @@ O `smoke.sh` ganha:
 
 Faseada, com linha de corte explícita. Se algo estourar no domingo, o que está acima da linha já entrega valor sozinho.
 
-1. Split loja/admin + controles de demo (sem auth)
+1. Split loja/dashboard + controles de demo (sem auth)
 2. noindex
 3. Domínios, TLS e fechamento das portas cruas
 4. Basic-auth no Loki + atualização do AGENTE.md
 5. **— linha de corte para segunda —**
-6. Auth: schema, hash, sessão, `/login`, proteção do `/admin`
-7. `/admin/usuarios`
+6. Auth: schema, hash, sessão, `/login`, proteção do `/dashboard`
+7. `/dashboard/usuarios`
 8. Testes e smoke ampliado
 
-Abaixo da linha, se der problema, o fallback é basic-auth do Traefik em `hostmaster.fagnerlopes.dev/admin` — protege o painel sem tela de login, e a demo acontece do mesmo jeito.
+Abaixo da linha, se der problema, o fallback é basic-auth do Traefik em `hostmaster.fagnerlopes.dev/dashboard` — protege o painel sem tela de login, e a demo acontece do mesmo jeito.
 
 ## Riscos
 
-| Risco | Mitigação |
-|---|---|
-| **Sessão falha no palco e você perde os controles de demo**, que agora moram no `/admin` | Os `curl` do RUNBOOK continuam funcionando e o `reset-demo.sh` não depende de login. O plano B não passa pela tela. |
-| Engines do Prisma não rastreados no standalone → container morre no primeiro login | `outputFileTracingIncludes` explícito; validar com build limpo antes do deploy |
-| Middleware do Coolify conflita com o basic-auth do Loki | Verificar cedo; fallback é a allowlist por IP no `ufw` |
-| DNS não propaga a tempo | Criar os registros primeiro, antes de mexer no código |
-| Escopo grande num fim de semana | Ordem faseada com linha de corte; segunda reservada para smoke test, não para depurar Prisma |
-| Botão de forçar erro visível no telão enfraquece a premissa | `<details>` fechado, sem destaque visual; anotado no RUNBOOK para não abrir no Ato 2 |
+| Risco                                                                                        | Mitigação                                                                                                           |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| **Sessão falha no palco e você perde os controles de demo**, que agora moram no `/dashboard` | Os `curl` do RUNBOOK continuam funcionando e o `reset-demo.sh` não depende de login. O plano B não passa pela tela. |
+| Engines do Prisma não rastreados no standalone → container morre no primeiro login           | `outputFileTracingIncludes` explícito; validar com build limpo antes do deploy                                      |
+| Middleware do Coolify conflita com o basic-auth do Loki                                      | Verificar cedo; fallback é a allowlist por IP no `ufw`                                                              |
+| DNS não propaga a tempo                                                                      | Criar os registros primeiro, antes de mexer no código                                                               |
+| Escopo grande num fim de semana                                                              | Ordem faseada com linha de corte; segunda reservada para smoke test, não para depurar Prisma                        |
+| Botão de forçar erro visível no telão enfraquece a premissa                                  | `<details>` fechado, sem destaque visual; anotado no RUNBOOK para não abrir no Ato 2                                |
 
 ## Ações fora do código
 

@@ -1,0 +1,1023 @@
+{
+  "info": {
+    "_postman_id": "a7c1e0d2-4b3f-4a91-8f6d-2c9b1e7a5d40",
+    "name": "HOSTMASTER — TDC Demo",
+    "description": "Endpoints da demo do TDC: e-commerce HOSTMASTER + Hermes Agent.\n\n**Como usar:** selecione um Environment antes de disparar qualquer request. `Local` aponta para a stack em docker compose na sua máquina; `VPS (portas cruas)` funciona hoje; `VPS (domínios TLS)` passa a funcionar depois que os domínios forem configurados no Coolify.\n\n**Por que as queries do Loki são POST e não GET:** LogQL contém `|`, `{`, `}`, `\"` e espaços. Codificação de query string é a fonte nº 1 de HTTP 400 no Loki, e o comportamento do Postman com esses caracteres não é confiável. O Loki aceita `POST` com `application/x-www-form-urlencoded`, que o Postman codifica corretamente — então esse é o caminho usado aqui.\n\n**Variáveis preenchidas sozinhas:** disparar qualquer checkout grava `correlationId` (e `orderId`, quando há sucesso) nas variáveis da collection. A request `Rastrear correlationId` usa isso direto, sem copiar e colar.\n\n**Nada aqui autentica na API.** A API e o Loki continuam abertos para o Hermes, por design. O login protege apenas o dashboard do Next.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Janela de 60 minutos para as queries do Loki, em nanossegundos.",
+          "// Concatenacao de string, nao multiplicacao: Date.now() * 1e6 passa de",
+          "// Number.MAX_SAFE_INTEGER e perde precisao silenciosamente.",
+          "const nowMs = Date.now();",
+          "const startMs = nowMs - 60 * 60 * 1000;",
+          "pm.collectionVariables.set('end_ns', String(nowMs) + '000000');",
+          "pm.collectionVariables.set('start_ns', String(startMs) + '000000');"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "api_url",
+      "value": "http://localhost:3001",
+      "type": "string"
+    },
+    {
+      "key": "web_url",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "loki_url",
+      "value": "http://localhost:3100",
+      "type": "string"
+    },
+    {
+      "key": "grafana_url",
+      "value": "http://localhost:3300",
+      "type": "string"
+    },
+    {
+      "key": "version",
+      "value": "v2",
+      "type": "string"
+    },
+    {
+      "key": "productId",
+      "value": "MONITOR-240HZ",
+      "type": "string"
+    },
+    {
+      "key": "userId",
+      "value": "user-1",
+      "type": "string"
+    },
+    {
+      "key": "correlationId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "orderId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loki_user",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "loki_pass",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "start_ns",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "end_ns",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Saúde e estado",
+      "description": "Leitura pura. Nada aqui altera estado — pode disparar à vontade no meio da live.",
+      "item": [
+        {
+          "name": "Health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_url}}/{{version}}/health",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "health"
+              ]
+            },
+            "description": "200 quando saudável. 500 com `{\"error\":\"crashed\"}` depois de um `simulate-crash`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('responde 200 ou 500 (crashed)', () => pm.expect([200, 500]).to.include(pm.response.code));",
+                  "console.log('status:', pm.response.json().status);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Status (métricas)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_url}}/{{version}}/status",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "status"
+              ]
+            },
+            "description": "`failureRate` é a taxa configurada; `observedFailureRate` é a medida desde o start. Antes da live as duas devem estar perto de 0.5."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('traz os campos de métrica', () => {",
+                  "  ['uptime','checkouts','failures','failureRate','crashed'].forEach(k => pm.expect(b).to.have.property(k));",
+                  "});",
+                  "console.log(`checkouts=${b.checkouts} failures=${b.failures} taxa=${b.failureRate} crashed=${b.crashed}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Produtos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_url}}/{{version}}/products",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "products"
+              ]
+            },
+            "description": "Vem do banco, com fallback para o catálogo estático se o Postgres estiver fora."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('5 produtos', () => pm.expect(pm.response.json().products).to.have.lengthOf(5));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Logs recentes (ring buffer)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{api_url}}/{{version}}/logs?limit=10",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "logs"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Buffer em memória que alimenta o painel do dashboard. Independente de Loki e Promtail — se a coleta cair no palco, este endpoint continua contando a história."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Checkout",
+      "description": "Gravam `correlationId` e `orderId` nas variáveis da collection, para a pasta do Loki usar em seguida.",
+      "item": [
+        {
+          "name": "Comprar (resultado natural)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"userId\": \"{{userId}}\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/checkout",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "checkout"
+              ]
+            },
+            "description": "Falha conforme o `failureRate` (0.5 por padrão), com o corte de streak forçando falha após 3 sucessos seguidos."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 (pago) ou 500 (falhou)', () => pm.expect([200, 500]).to.include(pm.response.code));",
+                  "const b = pm.response.json();",
+                  "if (b.correlationId) pm.collectionVariables.set('correlationId', b.correlationId);",
+                  "if (b.orderId) pm.collectionVariables.set('orderId', b.orderId);",
+                  "console.log(pm.response.code === 200",
+                  "  ? `PAGO ${b.orderId} | correlationId ${b.correlationId}`",
+                  "  : `FALHOU ${b.error} | correlationId ${b.correlationId}`);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Comprar (falha garantida)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"productId\": \"{{productId}}\",\n  \"userId\": \"{{userId}}\",\n  \"forceFailure\": true\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/checkout",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "checkout"
+              ]
+            },
+            "description": "Falha sem alterar o estado global — não mexe no `failureRate` nem consome o `forceNextOutcome`.\n\nA linha de log gerada é **byte-idêntica** à de uma falha natural: não existe campo `forced`. O Hermes não tem como distinguir, e é isso que mantém a investigação honesta."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('500', () => pm.response.to.have.status(500));",
+                  "const b = pm.response.json();",
+                  "pm.collectionVariables.set('correlationId', b.correlationId);",
+                  "pm.test('traz reason e correlationId', () => {",
+                  "  pm.expect(b).to.have.property('error');",
+                  "  pm.expect(b).to.have.property('correlationId');",
+                  "});",
+                  "console.log(`correlationId ${b.correlationId} — motivo ${b.error}`);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Controles de palco",
+      "description": "Mutação de estado em memória. Mesma natureza do `simulate-crash` que já estava na spec — nenhum alerta, webhook ou cron.\n\n**Esta pasta é o plano B dos controles do dashboard.** Se o login falhar no palco, tudo o que os botões fazem está aqui.",
+      "item": [
+        {
+          "name": "Forçar falha no próximo clique",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forceNextOutcome\": \"fail\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            },
+            "description": "Botão de pânico. O próximo checkout — inclusive um clique na loja — falha. Consumido na hora."
+          }
+        },
+        {
+          "name": "Forçar sucesso no próximo clique",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"forceNextOutcome\": \"success\"\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Taxa de falha 0%",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"failureRate\": 0\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            },
+            "description": "Atenção: com `maxSuccessStreak` em 3, o corte de streak ainda força falha no 4º sucesso seguido. Para nunca falhar, mande também `\"maxSuccessStreak\": 0`."
+          }
+        },
+        {
+          "name": "Taxa de falha 50% (baseline)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"failureRate\": 0.5\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Taxa de falha 100%",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"failureRate\": 1\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            },
+            "description": "Útil no smoke test. **Não esqueça de voltar ao baseline antes da live** — com 100%, todo clique falha e a premissa \"o sistema normalmente funciona\" desaba."
+          }
+        },
+        {
+          "name": "Derrubar / restabelecer serviço",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{api_url}}/{{version}}/simulate-crash",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "simulate-crash"
+              ]
+            },
+            "description": "**Alterna** o estado — dispare duas vezes para voltar ao normal. Com crash ligado, o `/health` responde 500 e o dot de status do dashboard fica vermelho."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "console.log(b.crashed ? 'SERVICO DERRUBADO — dispare de novo para restabelecer' : 'servico restabelecido');"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Resetar baseline",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reset\": true\n}"
+            },
+            "url": {
+              "raw": "{{api_url}}/{{version}}/config",
+              "host": [
+                "{{api_url}}"
+              ],
+              "path": [
+                "{{version}}",
+                "config"
+              ]
+            },
+            "description": "Volta a `failureRate=0.5`, `maxSuccessStreak=3`, sem crash e sem resultado forçado. Equivale ao `scripts/reset-demo.sh` para uma versão.\n\n**Deixado por último de propósito:** um run completo da collection passa pelo `simulate-crash`, que alterna o estado. Sem este reset no fim, a stack ficaria derrubada."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const b = pm.response.json();",
+                  "pm.test('voltou ao baseline', () => {",
+                  "  pm.expect(b.failureRate).to.eql(0.5);",
+                  "  pm.expect(b.crashed).to.eql(false);",
+                  "  pm.expect(b.forceNextOutcome).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Investigação no Loki (o que o Hermes faz)",
+      "description": "As queries do AGENTE.md. Todas em `POST` com `x-www-form-urlencoded`.\n\nA autenticação básica já está configurada com `{{loki_user}}` / `{{loki_pass}}`. Hoje essas variáveis estão vazias e o Loki ignora o header. Depois que o basic-auth do Traefik entrar, basta preencher no Environment.\n\n**Sobre a espera de 3s:** as duas requests com assercao rigida aguardam antes de consultar, porque o Promtail entrega em lote a cada 1s. Rodar a query imediatamente depois de um checkout devolve vazio por corrida.",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{loki_user}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{loki_pass}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Erros (query do gate)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "{job=\"api\"} | json | level=\"error\"",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            },
+            "description": "Se esta retornar vazio, a talk cai. É a checagem que decide tudo."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// O Promtail entrega em lote (batchwait 1s). Sem esta espera, a query roda",
+                  "// antes da linha chegar ao Loki e a assercao falha por corrida, nao por bug.",
+                  "setTimeout(() => {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const linhas = pm.response.json().data.result.flatMap(r => r.values);",
+                  "pm.test('achou pelo menos uma linha de erro', () => pm.expect(linhas.length).to.be.above(0));",
+                  "if (linhas.length) console.log(JSON.parse(linhas[0][1]));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erros no checkout da versão",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "{job=\"api\"} | json | endpoint=\"/{{version}}/checkout\" | level=\"error\"",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Rastrear correlationId",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "{job=\"api\"} | json | correlationId=\"{{correlationId}}\"",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "limit",
+                  "value": "10",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            },
+            "description": "Usa o `correlationId` gravado pelo último checkout. Devem vir **exatamente 2 linhas**: início e desfecho."
+          },
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "// O Promtail entrega em lote (batchwait 1s). Sem esta espera, a query roda",
+                  "// antes da linha chegar ao Loki e a assercao falha por corrida, nao por bug.",
+                  "setTimeout(() => {}, 3000);"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const linhas = pm.response.json().data.result.flatMap(r => r.values);",
+                  "pm.test('exatamente 2 linhas (início + desfecho)', () => pm.expect(linhas.length).to.eql(2));",
+                  "linhas.map(v => JSON.parse(v[1])).forEach(l => console.log(l.level, l.message));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erros de um produto",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "{job=\"api\"} | json | endpoint=\"/{{version}}/checkout\" | productId=\"{{productId}}\" | level=\"error\"",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "limit",
+                  "value": "100",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Contar erros por minuto",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "count_over_time({job=\"api\"} | json | endpoint=\"/{{version}}/checkout\" | level=\"error\" [1m])",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "step",
+                  "value": "60",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            },
+            "description": "Retorna `resultType: matrix`, não `streams` — é métrica, não log."
+          }
+        },
+        {
+          "name": "Erros agrupados por motivo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "query",
+                  "value": "sum by (reason) (count_over_time({job=\"api\"} | json | level=\"error\" [5m]))",
+                  "type": "text"
+                },
+                {
+                  "key": "start",
+                  "value": "{{start_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "end",
+                  "value": "{{end_ns}}",
+                  "type": "text"
+                },
+                {
+                  "key": "step",
+                  "value": "60",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/query_range",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "query_range"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Labels de stream (detectar escrita de fora)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{loki_url}}/loki/api/v1/label/job/values",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "loki",
+                "api",
+                "v1",
+                "label",
+                "job",
+                "values"
+              ]
+            },
+            "description": "Enquanto a porta 3100 estiver aberta, qualquer um pode escrever no Loki. Se aparecer um `job` que você não reconhece, alguém injetou log de fora — confira antes de subir ao palco."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const jobs = pm.response.json().data;",
+                  "pm.test('job=api existe', () => pm.expect(jobs).to.include('api'));",
+                  "console.log('jobs no Loki:', jobs.join(', '));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Diagnóstico da stack",
+      "description": "Quando algo não funciona, rode nesta ordem. O primeiro que falhar aponta a camada quebrada.",
+      "item": [
+        {
+          "name": "Loki está pronto",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{loki_url}}/ready",
+              "host": [
+                "{{loki_url}}"
+              ],
+              "path": [
+                "ready"
+              ]
+            },
+            "description": "O Loki **não tem UI**: a raiz retorna 404 e isso é normal. Para liveness use `/ready`; para olhar log com os olhos, use o Grafana."
+          }
+        },
+        {
+          "name": "Grafana está no ar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{grafana_url}}/api/health",
+              "host": [
+                "{{grafana_url}}"
+              ],
+              "path": [
+                "api",
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Datasource do Loki provisionado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{grafana_url}}/api/datasources",
+              "host": [
+                "{{grafana_url}}"
+              ],
+              "path": [
+                "api",
+                "datasources"
+              ]
+            },
+            "description": "Deve trazer um datasource do tipo `loki` apontando para `http://loki:3100` — o endereço interno do compose, que não passa pelo Traefik e por isso não é afetado por basic-auth."
+          }
+        },
+        {
+          "name": "Loja responde",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{web_url}}/",
+              "host": [
+                "{{web_url}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          }
+        },
+        {
+          "name": "Proxy do Next alcança a API",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{web_url}}/api/proxy/{{version}}/health",
+              "host": [
+                "{{web_url}}"
+              ],
+              "path": [
+                "api",
+                "proxy",
+                "{{version}}",
+                "health"
+              ]
+            },
+            "description": "Se o `Health` direto passa mas este falha, o problema é o `API_INTERNAL_URL` do container web, não a API."
+          }
+        }
+      ]
+    }
+  ]
+}

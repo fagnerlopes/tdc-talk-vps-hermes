@@ -147,6 +147,7 @@ scripts/                  # smoke.sh, reset-demo.sh
 | Arquivo | Para quê |
 |---|---|
 | [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) | **script minuto a minuto da live + botões de pânico** |
+| [postman/](postman/) | collection do Postman — consumo manual e plano B dos controles de palco |
 | [AGENTE.md](AGENTE.md) | contrato de operação do Hermes (queries LogQL, campos, fluxo) |
 | [CHECKLIST-PRE-LIVE.md](CHECKLIST-PRE-LIVE.md) | validação 1h antes |
 | [DEPLOY.md](DEPLOY.md) | deploy no Coolify |
