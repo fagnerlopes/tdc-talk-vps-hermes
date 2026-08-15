@@ -14,8 +14,13 @@ Nada disso está codificado na aplicação. A aplicação só loga; toda a intel
 
 ## Ambiente de acesso
 
-> **PREENCHER APÓS O DEPLOY.** O Hermes roda fora da VPS e **não enxerga `localhost`**.
-> Trocar os valores abaixo pelas URLs públicas reais antes da live.
+> **PREENCHER APÓS O DEPLOY.** O Hermes roda numa **VPS separada** da que hospeda a
+> aplicação — ele não enxerga `localhost`. Trocar os valores abaixo pelas URLs
+> públicas reais antes da live.
+>
+> O acesso à porta 3100 é restrito. Ver [DEPLOY.md](DEPLOY.md#exposição-do-loki-r4):
+> ou o IP da VPS do Hermes está liberado no firewall (nada muda nos comandos abaixo),
+> ou há basic-auth, e aí todo `curl` ao Loki precisa de `-u "$LOKI_USER:$LOKI_PASS"`.
 
 | Recurso | URL | Descrição |
 |---|---|---|

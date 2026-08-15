@@ -74,16 +74,59 @@ api -X POST "$COOLIFY/api/v1/deploy?uuid=<app-uuid>&force=false"
 
 O primeiro build leva **4–8 min** numa VPS pequena (duas imagens Node). Faça isso no **domingo**, não na segunda. Na segunda às 18h deve ser só `up` + smoke test.
 
-## Exposição do Loki (R4)
+## Exposição do Loki (R4) — decidido
 
-O repositório é público e o Loki roda com `auth_enabled: false`. Quem achar a porta 3100 **lê e escreve** logs.
+**O Hermes roda numa VPS separada do Coolify.** Ou seja, a porta 3100 precisa ser alcançável pela internet — `127.0.0.1:3100:3100` não serve aqui.
 
-| Onde o Hermes roda | O que fazer |
-|---|---|
-| **Na própria VPS** | não publicar a 3100 na internet. No `docker-compose.yml`, trocar `"3100:3100"` por `"127.0.0.1:3100:3100"`. O Hermes acessa via `localhost`, e o Grafana (que fala com o Loki pela rede interna do compose) continua funcionando. |
-| **Fora da VPS** | expor a 3100 atrás de basic-auth no Traefik do Coolify, e colocar as credenciais no [AGENTE.md](AGENTE.md). |
+O problema: o repositório é público e o Loki roda com `auth_enabled: false`. Quem achar a 3100 aberta **lê e escreve** logs. Escrever é o pior dos dois: um terceiro pode injetar linhas no stream `job="api"` e envenenar a investigação do Hermes no meio da talk.
 
-Não deixe o Loki aberto na internet de um dia para o outro. Depois da live, derrube a stack ou feche a porta.
+### Opção A — allowlist por IP (recomendada)
+
+Não exige credencial nenhuma no repositório público e não muda uma vírgula nas queries do Hermes.
+
+Na VPS do Coolify, descubra o IP de saída da VPS do Hermes e libere só ele:
+
+```bash
+# na VPS do Hermes:
+curl -s https://api.ipify.org; echo
+
+# na VPS do Coolify, como root:
+ufw allow from <IP-DA-VPS-DO-HERMES> to any port 3100 proto tcp
+ufw deny 3100/tcp
+ufw status numbered
+```
+
+A ordem importa: a regra específica de `allow` precisa vir **antes** do `deny`. Confirme com `ufw status numbered` e, se preciso, reordene com `ufw insert 1 ...`.
+
+Valide dos dois lados:
+```bash
+# da VPS do Hermes — deve responder
+curl -s http://<HOST>:3100/ready
+
+# do seu laptop — deve dar timeout
+curl -s -m 5 http://<HOST>:3100/ready
+```
+
+### Opção B — basic-auth no Traefik (se o IP do Hermes for dinâmico)
+
+No Coolify, adicione ao serviço `loki` os labels do Traefik com um middleware `basicauth`. **Não** coloque a senha no [AGENTE.md](AGENTE.md) — o repositório é público. Deixe o `AGENTE.md` com placeholders e passe as credenciais ao Hermes por variável de ambiente:
+
+```bash
+curl -sG -u "$LOKI_USER:$LOKI_PASS" "https://loki.<dominio>/loki/api/v1/query_range" \
+  --data-urlencode 'query={job="api"} | json | level="error"'
+```
+
+Gere o hash com `htpasswd -nb hermes '<senha>'` e dobre os `$` para `$$` no valor do label.
+
+### Nos dois casos
+
+- A 3100 fica exposta **só entre o deploy de domingo e a live de segunda**. Depois da live, `docker compose down` ou feche a porta.
+- O Grafana (`:3300`) fala com o Loki pela rede interna do compose e não é afetado por nenhuma das duas opções.
+- Se em algum momento aparecer no Loki um stream com label diferente de `job="api"`, alguém escreveu de fora. Confira antes de subir ao palco:
+  ```bash
+  curl -s http://<HOST>:3100/loki/api/v1/labels | jq -c '.data'
+  # esperado: ["filename","job","service_name"]
+  ```
 
 ## Depois do deploy
 
