@@ -70,6 +70,23 @@ services:
     volumes:
       # volume NOMEADO, nao bind mount — ver comentario em loki-config.yaml
       - loki_data:/loki
+    # Basic-auth NO TRAEFIK, nao na aplicacao: o Loki continua com
+    # auth_enabled: false e o Hermes so precisa de `curl -u`.
+    #
+    # Os dois caminhos INTERNOS nao passam pelo Traefik e NAO sao afetados:
+    #   promtail -> http://loki:3100 (push)
+    #   grafana  -> http://loki:3100 (datasource)
+    # Se o Grafana parar de ver dados depois disto, o problema e outro.
+    #
+    # O nome do roteador e gerado pelo Coolify a partir do dominio, e o
+    # `middlewares=gzip` tambem e dele — por isso `gzip,loki-auth`, e nao so
+    # `loki-auth`: sobrescrever o valor derrubaria a compressao. Reconfira com:
+    #   api "$COOLIFY/api/v1/applications/$APP" | jq -r '.docker_compose' \
+    #     | sed -n '/^  loki:/,/^  [a-z]/p' | grep traefik
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.middlewares.loki-auth.basicauth.users=${LOKI_BASIC_AUTH}"
+      - "traefik.http.routers.https-0-rye22uhkjq7j4qauczrb3jlo-loki-e64c.middlewares=gzip,loki-auth"
 
   promtail:
     build:
