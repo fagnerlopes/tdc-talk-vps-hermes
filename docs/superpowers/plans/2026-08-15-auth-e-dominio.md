@@ -68,7 +68,7 @@ Copiadas literalmente da seção "Restrições invioláveis" da spec. Valem para
 |---|---|
 | VPS | `vps70013.publiccloud.com.br` / `177.153.35.27` |
 | Coolify | `http://vps70013.publiccloud.com.br:8000` |
-| Token da API | `1\|TBSPqpEroo4a7IDbrm7Gj0zWMQUqfSUmEZJHr6a427ee59ba` |
+| Token da API | *(nunca versionar — em variável de ambiente; ver PROMPT-HERMES-COOLIFY.md)* |
 | Aplicação | `rye22uhkjq7j4qauczrb3jlo` (`hostmaster-demo`) |
 | Projeto | `hacknwt4zpfg0zqrwdqqdgqv` · Server `bqhc6vorheb0dwc3h756opbx` |
 
@@ -76,7 +76,7 @@ Helper usado em várias tasks:
 
 ```bash
 export COOLIFY=http://vps70013.publiccloud.com.br:8000
-export TOKEN='1|TBSPqpEroo4a7IDbrm7Gj0zWMQUqfSUmEZJHr6a427ee59ba'
+export TOKEN='<token do Coolify — nunca versionar; ver PROMPT-HERMES-COOLIFY.md>'
 export APP=rye22uhkjq7j4qauczrb3jlo
 api() { curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$@"; }
 ```
@@ -163,7 +163,7 @@ Os quatro registros A já existem e resolvem para `177.153.35.27`. Falta só diz
 
 ```bash
 export COOLIFY=http://vps70013.publiccloud.com.br:8000
-export TOKEN='1|TBSPqpEroo4a7IDbrm7Gj0zWMQUqfSUmEZJHr6a427ee59ba'
+export TOKEN='<token do Coolify — nunca versionar; ver PROMPT-HERMES-COOLIFY.md>'
 export APP=rye22uhkjq7j4qauczrb3jlo
 api() { curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$@"; }
 
