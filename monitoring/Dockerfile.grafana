@@ -1,0 +1,3 @@
+# Provisioning viaja dentro da imagem — ver o comentario em Dockerfile.loki.
+FROM grafana/grafana:11.2.0
+COPY grafana/provisioning /etc/grafana/provisioning

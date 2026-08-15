@@ -54,19 +54,27 @@ services:
     environment:
       API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:3001}
 
+  # loki, promtail e grafana levam o proprio config DENTRO da imagem, em vez de
+  # bind mount relativo. O Coolify reescreve binds relativos para um caminho do
+  # host onde os arquivos nao estao, o Docker cria um diretorio vazio no lugar do
+  # arquivo e o container morre com "not a directory". Ver monitoring/Dockerfile.loki.
+  # Volume nomeado continua sendo bind-mountavel sem problema.
   loki:
-    image: grafana/loki:3.1.1
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.loki
     restart: unless-stopped
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "3100:3100"
     volumes:
-      - ./monitoring/loki-config.yaml:/etc/loki/local-config.yaml:ro
       # volume NOMEADO, nao bind mount — ver comentario em loki-config.yaml
       - loki_data:/loki
 
   promtail:
-    image: grafana/promtail:3.1.1
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.promtail
     restart: unless-stopped
     command: -config.file=/etc/promtail/config.yml
     ports:
@@ -74,12 +82,13 @@ services:
     depends_on:
       - loki
     volumes:
-      - ./monitoring/promtail-config.yaml:/etc/promtail/config.yml:ro
       - app_logs:/var/log/app:ro
       - promtail_positions:/promtail
 
   grafana:
-    image: grafana/grafana:11.2.0
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.grafana
     restart: unless-stopped
     ports:
       - "3300:3000"
@@ -90,9 +99,7 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
       GF_AUTH_DISABLE_LOGIN_FORM: "true"
       GF_USERS_DEFAULT_THEME: dark
-      GF_FEATURE_TOGGLES_ENABLE: ""
     volumes:
-      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
 
 volumes:

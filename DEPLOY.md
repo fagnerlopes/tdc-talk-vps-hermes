@@ -142,17 +142,20 @@ Gere o hash com `htpasswd -nb hermes '<senha>'` e dobre os `$` para `$$` no valo
 
 ## Riscos conhecidos no ambiente do Coolify
 
-**Bind mount relativo de `./monitoring/*.yaml`** é a falha de compose mais reportada no Coolify. Se o `loki` ou o `promtail` subir reclamando de config ausente, troque `image:` por `build:` usando os Dockerfiles já commitados:
+**Bind mount relativo de arquivo — já resolvido, não desfaça.** O primeiro deploy (`psksw8yjogxq4dmlobgwkhi0`) morreu assim:
 
-```yaml
-loki:
-  build: { context: ./monitoring, dockerfile: Dockerfile.loki }
-  volumes: [loki_data:/loki]
-
-promtail:
-  build: { context: ./monitoring, dockerfile: Dockerfile.promtail }
-  volumes: [app_logs:/var/log/app:ro, promtail_positions:/promtail]
 ```
+error mounting "/data/coolify/applications/<app-uuid>/monitoring/loki-config.yaml"
+to rootfs at "/etc/loki/local-config.yaml": not a directory
+```
+
+O Coolify roda o compose a partir de `/artifacts/<deploy-uuid>/` mas reescreve os binds relativos para `/data/coolify/applications/<app-uuid>/...`, onde os arquivos não estão. O Docker então cria um **diretório vazio** no lugar do arquivo e o container morre.
+
+Por isso `loki`, `promtail` e `grafana` usam `build:` com os Dockerfiles em `monitoring/`, levando o config dentro da imagem. **Não volte para `image:` + bind mount** — vai quebrar de novo.
+
+Duas coisas que continuam funcionando normalmente no Coolify e não precisam de contorno:
+- **build context relativo** (`context: .` e `context: ./monitoring`) — as imagens `api` e `web` compilaram sem problema já no deploy que falhou
+- **volumes nomeados** (`loki_data`, `app_logs`, …)
 
 **Versão do compose.** O compose local é 2.3.3 e já não aceita `docker compose ps --format '{{.Service}}'`. Não assuma paridade entre laptop e VPS — teste os comandos operacionais **na VPS**.
 
