@@ -1,55 +1,76 @@
 # Deploy no Coolify
 
-VPS: `vps70013.publiccloud.com.br` · Coolify em `:8000`
+**Status: no ar.** Deploy `tcxbdswnjdftburh9ym1y7iy` concluído, smoke test 23/23 contra a VPS.
 
-## Pré-requisito: liberar a API do Coolify
+| | |
+|---|---|
+| VPS | `vps70013.publiccloud.com.br` (`177.153.35.27`) |
+| Coolify | `http://vps70013.publiccloud.com.br:8000` |
+| Projeto | `tdc-hermes-demo` — `hacknwt4zpfg0zqrwdqqdgqv` |
+| Environment | `production` — `wjehcipdv6aiz9kiaymbgp7p` |
+| Server | `localhost` — `bqhc6vorheb0dwc3h756opbx` |
+| Aplicação | `hostmaster-demo` — `rye22uhkjq7j4qauczrb3jlo` |
 
-Neste momento a API responde:
+### URLs públicas
 
-```
-$ curl -H "Authorization: Bearer <TOKEN>" http://vps70013.publiccloud.com.br:8000/api/v1/version
-{"success":true,"message":"You are not allowed to access the API."}
-```
+| Serviço | URL |
+|---|---|
+| Dashboard | http://vps70013.publiccloud.com.br:3000 |
+| API | http://vps70013.publiccloud.com.br:3001 |
+| Loki | http://vps70013.publiccloud.com.br:3100 |
+| Grafana | http://vps70013.publiccloud.com.br:3300 |
+| Promtail | http://vps70013.publiccloud.com.br:9080 |
 
-O token **autentica** (sem ele a resposta é `401 Unauthenticated`; com ele, `403`). O bloqueio é do middleware de API do Coolify. Na UI, em **Settings → API**:
+O FQDN sslip que o Coolify gerou (`rye22uhkjq7j4qauczrb3jlo.177.153.35.27.sslip.io`) retorna **404**: o Traefik não sabe qual dos 6 serviços do compose atender. As portas publicadas funcionam e são o que o [AGENTE.md](AGENTE.md) usa. Para rotear o domínio ao dashboard, aponte-o ao serviço `web` na porta 3000 pela UI do Coolify.
 
-1. Ativar **API enabled**
-2. Em **Allowed IPs**, deixar vazio (libera todos) ou adicionar o IP de onde os comandos vão sair
-
-Sem isso, faça o deploy pela UI seguindo a seção "Deploy pela UI" abaixo.
-
-## Deploy pela API REST
+## Refazer o deploy pela API REST
 
 ```bash
 export COOLIFY=http://vps70013.publiccloud.com.br:8000
-export TOKEN='<api-token>'
+export TOKEN='<api-token>'   # Coolify > Security > API Tokens
 api() { curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' "$@"; }
 
-api "$COOLIFY/api/v1/version"                    # sanidade
-api "$COOLIFY/api/v1/servers"  | jq -r '.[] | "\(.uuid)  \(.name)"'
-api "$COOLIFY/api/v1/projects" | jq -r '.[] | "\(.uuid)  \(.name)"'
+api "$COOLIFY/api/v1/version"
+api -X POST "$COOLIFY/api/v1/deploy?uuid=rye22uhkjq7j4qauczrb3jlo&force=false"
 ```
 
-Guarde `server_uuid` e `project_uuid`, descubra o `environment_name` (normalmente `production`) e crie a aplicação:
+Acompanhar:
+```bash
+api "$COOLIFY/api/v1/deployments/<deployment-uuid>" | jq -r '.status'
+api "$COOLIFY/api/v1/deployments/<deployment-uuid>" | jq -r '.logs' | jq -r '.[].output'
+```
+
+**A API do Coolify precisa estar habilitada** em Settings → API (`API access: Enabled`). Desabilitada, todo endpoint responde `403 {"message":"You are not allowed to access the API."}` mesmo com token válido — sem token o erro é `401`, o que distingue os dois casos.
+
+### Como a aplicação foi criada (referência)
 
 ```bash
-api -X POST "$COOLIFY/api/v1/applications/dockercompose" -d '{
-  "project_uuid": "<project-uuid>",
-  "server_uuid": "<server-uuid>",
+api -X POST "$COOLIFY/api/v1/projects" \
+  -d '{"name":"tdc-hermes-demo","description":"Demo TDC - HOSTMASTER + Hermes Agent"}'
+# a descrição não aceita ":" — a validação do Coolify rejeita
+
+api -X POST "$COOLIFY/api/v1/applications/public" -d '{
+  "project_uuid": "hacknwt4zpfg0zqrwdqqdgqv",
+  "server_uuid": "bqhc6vorheb0dwc3h756opbx",
   "environment_name": "production",
+  "environment_uuid": "wjehcipdv6aiz9kiaymbgp7p",
+  "name": "hostmaster-demo",
   "git_repository": "https://github.com/fagnerlopes/tdc-talk-vps-hermes",
   "git_branch": "main",
+  "build_pack": "dockercompose",
   "docker_compose_location": "/docker-compose.yml",
-  "name": "tdc-hermes-demo",
   "instant_deploy": false
 }'
 ```
 
-Depois, as variáveis de ambiente (uma chamada por variável, em `/api/v1/applications/<uuid>/envs`):
+### Variáveis de ambiente
+
+Não foi preciso criar nenhuma na mão: o Coolify parseia o `docker-compose.yml` e extrai os `${VAR:-default}` com os defaults corretos. Conferir com `api "$COOLIFY/api/v1/applications/rye22uhkjq7j4qauczrb3jlo/envs"` — devem aparecer 20 entradas (10 chaves × runtime + preview):
 
 | Chave | Valor |
 |---|---|
 | `DATABASE_URL` | `postgresql://dev_user:dev123@postgres:5432/hermes_demo` |
+| `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | `dev_user` / `dev123` / `hermes_demo` |
 | `LOG_FILE` | `/var/log/app/api.log` |
 | `LOG_LEVEL` | `info` |
 | `CHECKOUT_FAILURE_RATE` | `0.5` |
@@ -57,28 +78,29 @@ Depois, as variáveis de ambiente (uma chamada por variável, em `/api/v1/applic
 | `SEED_ON_BOOT` | `true` |
 | `API_INTERNAL_URL` | `http://api:3001` |
 
-E dispare:
+Ao criar env var pela API, **não** envie `is_build_time` — o Coolify 4.3.2 rejeita o campo com `"This field is not allowed."`.
 
-```bash
-api -X POST "$COOLIFY/api/v1/deploy?uuid=<app-uuid>&force=false"
-```
+O build completo leva ~5 min (duas imagens Node). Na segunda às 18h deve ser só smoke test.
 
-## Deploy pela UI
-
-1. **+ New → Docker Compose Empty** (ou **Public Repository**, apontando para `https://github.com/fagnerlopes/tdc-talk-vps-hermes`, branch `main`, compose em `/docker-compose.yml`)
-2. Em **Environment Variables**, adicionar a tabela acima
-3. Em **Domains**, apontar o domínio para o serviço `web` (porta 3000)
-4. Publicar as portas `3001` (API — o Hermes) e `3300` (Grafana)
-5. Decidir a exposição do Loki — ver abaixo
-6. **Deploy**
-
-O primeiro build leva **4–8 min** numa VPS pequena (duas imagens Node). Faça isso no **domingo**, não na segunda. Na segunda às 18h deve ser só `up` + smoke test.
-
-## Exposição do Loki (R4) — decidido
+## Exposição do Loki (R4) — ABERTA AGORA, precisa ser fechada
 
 **O Hermes roda numa VPS separada do Coolify.** Ou seja, a porta 3100 precisa ser alcançável pela internet — `127.0.0.1:3100:3100` não serve aqui.
 
-O problema: o repositório é público e o Loki roda com `auth_enabled: false`. Quem achar a 3100 aberta **lê e escreve** logs. Escrever é o pior dos dois: um terceiro pode injetar linhas no stream `job="api"` e envenenar a investigação do Hermes no meio da talk.
+O problema não é teórico. Com a stack no ar, um `push` anônimo de um laptop qualquer foi aceito:
+
+```
+$ curl -X POST http://vps70013.publiccloud.com.br:3100/loki/api/v1/push \
+    -H 'content-type: application/json' \
+    -d '{"streams":[{"stream":{"job":"teste-de-exposicao"},"values":[["<ts>","linha injetada de fora"]]}]}'
+HTTP 204
+
+$ curl -s http://vps70013.publiccloud.com.br:3100/loki/api/v1/label/job/values | jq -c '.data'
+["api","teste-de-exposicao"]
+```
+
+O repositório é público e o Loki roda com `auth_enabled: false`. Quem achar a 3100 **lê e escreve** logs. Escrever é o pior dos dois: dá para injetar linhas em `job="api"` e envenenar a investigação do Hermes ao vivo.
+
+O stream `teste-de-exposicao` acima ficou no Loki. É inofensivo — as queries da demo filtram `{job="api"}` — mas serve de marcador: se ele ainda estiver lá, a porta continua aberta.
 
 ### Opção A — allowlist por IP (recomendada)
 
@@ -101,10 +123,10 @@ A ordem importa: a regra específica de `allow` precisa vir **antes** do `deny`.
 Valide dos dois lados:
 ```bash
 # da VPS do Hermes — deve responder
-curl -s http://<HOST>:3100/ready
+curl -s http://vps70013.publiccloud.com.br:3100/ready
 
 # do seu laptop — deve dar timeout
-curl -s -m 5 http://<HOST>:3100/ready
+curl -s -m 5 http://vps70013.publiccloud.com.br:3100/ready
 ```
 
 ### Opção B — basic-auth no Traefik (se o IP do Hermes for dinâmico)
@@ -112,7 +134,7 @@ curl -s -m 5 http://<HOST>:3100/ready
 No Coolify, adicione ao serviço `loki` os labels do Traefik com um middleware `basicauth`. **Não** coloque a senha no [AGENTE.md](AGENTE.md) — o repositório é público. Deixe o `AGENTE.md` com placeholders e passe as credenciais ao Hermes por variável de ambiente:
 
 ```bash
-curl -sG -u "$LOKI_USER:$LOKI_PASS" "https://loki.<dominio>/loki/api/v1/query_range" \
+curl -sG -u "$LOKI_USER:$LOKI_PASS" "https://loki.vps70013.publiccloud.com.br/loki/api/v1/query_range" \
   --data-urlencode 'query={job="api"} | json | level="error"'
 ```
 
@@ -120,25 +142,46 @@ Gere o hash com `htpasswd -nb hermes '<senha>'` e dobre os `$` para `$$` no valo
 
 ### Nos dois casos
 
-- A 3100 fica exposta **só entre o deploy de domingo e a live de segunda**. Depois da live, `docker compose down` ou feche a porta.
+- A 3100 fica exposta **só até a live de segunda**. Depois, `docker compose down` ou feche a porta.
 - O Grafana (`:3300`) fala com o Loki pela rede interna do compose e não é afetado por nenhuma das duas opções.
-- Se em algum momento aparecer no Loki um stream com label diferente de `job="api"`, alguém escreveu de fora. Confira antes de subir ao palco:
+- Antes de subir ao palco, confira se ninguém escreveu de fora:
   ```bash
-  curl -s http://<HOST>:3100/loki/api/v1/labels | jq -c '.data'
-  # esperado: ["filename","job","service_name"]
+  curl -s http://vps70013.publiccloud.com.br:3100/loki/api/v1/label/job/values | jq -c '.data'
+  # esperado depois de fechar a porta: ["api","teste-de-exposicao"]
+  # qualquer job novo além desses dois = alguém escreveu de fora
   ```
+
+### As outras portas abertas
+
+O Coolify publicou as seis portas do compose no host. Além da 3100:
+
+| Porta | Serviço | Risco |
+|---|---|---|
+| `5432` | Postgres | **aberta com `dev_user`/`dev123`**, credenciais que estão neste repositório público. Dá para apagar a tabela `products` no meio da demo. Feche junto com a 3100 — nada externo precisa dela. |
+| `9080` | Promtail | só expõe `/ready` e métricas. Baixo risco, mas o smoke test é o único consumidor externo. |
+| `3300` | Grafana | anônimo com papel Admin, por design (abrir no Explore sem login no palco). Quem achar consegue mexer nos dashboards. |
+| `3000` / `3001` | Web e API | precisam ser públicas — são o palco e o canal do Hermes. |
+
+```bash
+# na VPS do Coolify, como root — fecha o que não precisa ser público
+ufw deny 5432/tcp
+ufw deny 9080/tcp
+```
 
 ## Depois do deploy
 
-1. Rodar o smoke test do laptop, contra as URLs públicas:
+1. ✅ Smoke test do laptop contra as URLs públicas — **23/23**:
    ```bash
-   API_URL=http://<HOST>:3001 WEB_URL=https://<dominio> \
-   LOKI_URL=http://<HOST>:3100 PROMTAIL_URL=http://<HOST>:9080 \
-   GRAFANA_URL=http://<HOST>:3300 ./scripts/smoke.sh
+   API_URL=http://vps70013.publiccloud.com.br:3001 WEB_URL=http://vps70013.publiccloud.com.br:3000 \
+   LOKI_URL=http://vps70013.publiccloud.com.br:3100 PROMTAIL_URL=http://vps70013.publiccloud.com.br:9080 \
+   GRAFANA_URL=http://vps70013.publiccloud.com.br:3300 ./scripts/smoke.sh
    ```
-2. **Atualizar o [AGENTE.md](AGENTE.md) com as URLs públicas reais.** O Hermes roda fora da VPS e não enxerga `localhost` — este passo não é opcional.
-3. Atualizar o `<HOST>` no [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md).
-4. `./scripts/reset-demo.sh` para deixar no baseline.
+2. ✅ [AGENTE.md](AGENTE.md), [RUNBOOK-LIVE.md](RUNBOOK-LIVE.md) e [CHECKLIST-PRE-LIVE.md](CHECKLIST-PRE-LIVE.md) com as URLs públicas reais
+3. ⬜ **Fechar a porta 3100** — ver a seção do R4 acima. Pendente e urgente.
+4. ⬜ Baseline antes da live:
+   ```bash
+   API_URL=http://vps70013.publiccloud.com.br:3001 ./scripts/reset-demo.sh
+   ```
 
 ## Riscos conhecidos no ambiente do Coolify
 

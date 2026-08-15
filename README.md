@@ -55,8 +55,8 @@ Levar ~30s. O container da API roda `prisma migrate deploy` e o seed idempotente
 Contra um host remoto:
 
 ```bash
-API_URL=https://<dominio>:3001 WEB_URL=https://<dominio> \
-LOKI_URL=https://<dominio>:3100 ./scripts/smoke.sh
+API_URL=https://vps70013.publiccloud.com.br:3001 WEB_URL=https://vps70013.publiccloud.com.br \
+LOKI_URL=https://vps70013.publiccloud.com.br:3100 ./scripts/smoke.sh
 ```
 
 ## Endpoints

@@ -14,29 +14,29 @@ Nada disso está codificado na aplicação. A aplicação só loga; toda a intel
 
 ## Ambiente de acesso
 
-> **PREENCHER APÓS O DEPLOY.** O Hermes roda numa **VPS separada** da que hospeda a
-> aplicação — ele não enxerga `localhost`. Trocar os valores abaixo pelas URLs
-> públicas reais antes da live.
+> URLs de produção, já no ar. O Hermes roda numa **VPS separada** da que hospeda a
+> aplicação — ele não enxerga `localhost`, por isso tudo abaixo usa o host público.
 >
-> O acesso à porta 3100 é restrito. Ver [DEPLOY.md](DEPLOY.md#exposição-do-loki-r4):
-> ou o IP da VPS do Hermes está liberado no firewall (nada muda nos comandos abaixo),
-> ou há basic-auth, e aí todo `curl` ao Loki precisa de `-u "$LOKI_USER:$LOKI_PASS"`.
+> **Pendente:** o acesso à porta 3100 ainda precisa ser restrito ao IP da VPS do
+> Hermes — ver [DEPLOY.md](DEPLOY.md#exposição-do-loki-r4). Feita a allowlist por IP,
+> nenhum comando desta página muda. Se a escolha for basic-auth, todo `curl` ao Loki
+> passa a precisar de `-u "$LOKI_USER:$LOKI_PASS"`.
 
 | Recurso | URL | Descrição |
 |---|---|---|
-| **API da aplicação** | `http://<HOST>:3001` | endpoints `/v1` e `/v2` |
-| **Loki** | `http://<HOST>:3100` | query de logs — o canal principal do Hermes |
-| **Grafana** | `http://<HOST>:3300` | Explore, sem login (uso humano, não do agente) |
+| **API da aplicação** | `http://vps70013.publiccloud.com.br:3001` | endpoints `/v1` e `/v2` |
+| **Loki** | `http://vps70013.publiccloud.com.br:3100` | query de logs — o canal principal do Hermes |
+| **Grafana** | `http://vps70013.publiccloud.com.br:3300` | Explore, sem login (uso humano, não do agente) |
 | **Telegram** | canal privado | recebe comandos e envia alertas |
-| **PostgreSQL** | `<HOST>:5432` | `dev_user` / `dev123` / `hermes_demo` |
+| **PostgreSQL** | `vps70013.publiccloud.com.br:5432` | `dev_user` / `dev123` / `hermes_demo` |
 
-Para rodar contra a stack local: substituir `<HOST>` por `localhost`.
+Para rodar contra a stack local: substituir `vps70013.publiccloud.com.br` por `localhost`.
 
 ## 1. Consultar o estado da aplicação
 
 ```bash
-curl -s http://<HOST>:3001/v2/health | jq '.'
-curl -s http://<HOST>:3001/v2/status | jq '.'
+curl -s http://vps70013.publiccloud.com.br:3001/v2/health | jq '.'
+curl -s http://vps70013.publiccloud.com.br:3001/v2/status | jq '.'
 ```
 
 Resposta de `/v2/health`:
@@ -63,12 +63,12 @@ Resposta de `/v2/status`:
 
 ## 2. Consultar logs no Loki
 
-**Endpoint:** `GET http://<HOST>:3100/loki/api/v1/query_range`
+**Endpoint:** `GET http://vps70013.publiccloud.com.br:3100/loki/api/v1/query_range`
 
 ⚠️ **Use `--data-urlencode`, nunca `-d`.** Uma query LogQL contém `|`, `{`, `}`, `"` e espaços. Com `-d` puro o curl não faz URL-encode e o Loki responde **HTTP 400**.
 
 ```bash
-LOKI=http://<HOST>:3100
+LOKI=http://vps70013.publiccloud.com.br:3100
 
 curl -sG "$LOKI/loki/api/v1/query_range" \
   --data-urlencode 'query={job="api"} | json | level="error"' \
@@ -320,25 +320,25 @@ Existem para tornar o palco determinístico. **O Hermes não deve chamá-los dur
 
 ```bash
 # provocar uma falha por curl, sem alterar o estado global
-curl -X POST http://<HOST>:3001/v2/checkout -H 'content-type: application/json' \
+curl -X POST http://vps70013.publiccloud.com.br:3001/v2/checkout -H 'content-type: application/json' \
   -d '{"productId":"MONITOR-240HZ","userId":"user-1","forceFailure":true}'
 
 # garantir que o PRÓXIMO clique falhe
-curl -X POST http://<HOST>:3001/v2/config -H 'content-type: application/json' \
+curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' \
   -d '{"forceNextOutcome":"fail"}'
 
 # ajustar a taxa de falha
-curl -X POST http://<HOST>:3001/v2/config -H 'content-type: application/json' \
+curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' \
   -d '{"failureRate":0.5}'
 
 # voltar ao baseline
-curl -X POST http://<HOST>:3001/v2/config -H 'content-type: application/json' -d '{"reset":true}'
+curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' -d '{"reset":true}'
 
 # derrubar / restabelecer o health
-curl -X POST http://<HOST>:3001/v2/simulate-crash
+curl -X POST http://vps70013.publiccloud.com.br:3001/v2/simulate-crash
 
 # últimas linhas do ring buffer (é o que o painel do dashboard consome)
-curl -s 'http://<HOST>:3001/v2/logs?limit=10' | jq '.logs'
+curl -s 'http://vps70013.publiccloud.com.br:3001/v2/logs?limit=10' | jq '.logs'
 ```
 
 **Uma falha forçada produz uma linha de log byte-idêntica a uma falha natural.** Não existe campo `forced`. O Hermes não tem — e não deve ter — como distinguir as duas.

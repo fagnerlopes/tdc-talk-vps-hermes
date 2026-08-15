@@ -9,9 +9,9 @@ Uma hora antes da live. A maior parte disto está automatizada:
 
 Contra a VPS:
 ```bash
-API_URL=http://<HOST>:3001 WEB_URL=http://<HOST>:3000 \
-LOKI_URL=http://<HOST>:3100 PROMTAIL_URL=http://<HOST>:9080 \
-GRAFANA_URL=http://<HOST>:3300 ./scripts/smoke.sh
+API_URL=http://vps70013.publiccloud.com.br:3001 WEB_URL=http://vps70013.publiccloud.com.br:3000 \
+LOKI_URL=http://vps70013.publiccloud.com.br:3100 PROMTAIL_URL=http://vps70013.publiccloud.com.br:9080 \
+GRAFANA_URL=http://vps70013.publiccloud.com.br:3300 ./scripts/smoke.sh
 ```
 
 O que segue abaixo é a versão manual, para quando você quiser olhar com os próprios olhos.
@@ -129,11 +129,11 @@ O que segue abaixo é a versão manual, para quando você quiser olhar com os pr
 
 - [ ] O Hermes alcança a API pública:
   ```bash
-  curl -s http://<HOST>:3001/v2/health
+  curl -s http://vps70013.publiccloud.com.br:3001/v2/health
   ```
 - [ ] O Hermes alcança o Loki público:
   ```bash
-  curl -sG http://<HOST>:3100/loki/api/v1/query_range \
+  curl -sG http://vps70013.publiccloud.com.br:3100/loki/api/v1/query_range \
     --data-urlencode 'query={job="api"} | json' --data-urlencode 'limit=5'
   ```
 - [ ] **[AGENTE.md](AGENTE.md) está com as URLs públicas reais**, não `localhost` — o Hermes roda fora da VPS
@@ -222,10 +222,10 @@ echo "=== Pronto. Boa live ==="
 | Ação | Comando / URL |
 |---|---|
 | Dashboard | http://\<HOST\>:3000 |
-| Health da API | `curl http://<HOST>:3001/v2/health` |
+| Health da API | `curl http://vps70013.publiccloud.com.br:3001/v2/health` |
 | Ver logs (humano) | http://\<HOST\>:3300 → Explore |
 | Simular erro | clicar em "Comprar" no dashboard |
-| **Garantir que o próximo clique falha** | `curl -X POST http://<HOST>:3001/v2/config -H 'content-type: application/json' -d '{"forceNextOutcome":"fail"}'` |
-| Derrubar o health | `curl -X POST http://<HOST>:3001/v2/simulate-crash` |
+| **Garantir que o próximo clique falha** | `curl -X POST http://vps70013.publiccloud.com.br:3001/v2/config -H 'content-type: application/json' -d '{"forceNextOutcome":"fail"}'` |
+| Derrubar o health | `curl -X POST http://vps70013.publiccloud.com.br:3001/v2/simulate-crash` |
 | Voltar ao baseline | `./scripts/reset-demo.sh` |
 | Reiniciar a stack | `docker compose down && docker compose up -d` (**sem `-v`**) |
