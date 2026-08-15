@@ -27,12 +27,14 @@ Docker Compose Stack
 ## **Endpoints (OBRIGATÓRIOS)**
 
 ### **Padrão /v1 (Teste Prévio)**
+
 - `GET /v1/health` → Status (200 ou 500 conforme estado em memória)
 - `GET /v1/status` → Métricas (uptime, checkouts, failures)
 - `POST /v1/checkout` → Compra (falha 50%, loga erro estruturado)
 - `POST /v1/simulate-crash` → Muda estado
 
 ### **Padrão /v2 (Live)**
+
 Mesma coisa que /v1, mas isolada para teste não interferir na live.
 
 ## **Logs Estruturados**
@@ -40,6 +42,7 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 **Ferramenta:** Pino (JSON)  
 **Saída:** stdout (Promtail coleta, Loki armazena)  
 **Campos obrigatórios:**
+
 ```json
 {
   "level": "error|info|warn",
@@ -54,6 +57,7 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 ```
 
 **Quando fazer log:**
+
 - ✅ Início de transação (info)
 - ✅ Falha (error + stack trace)
 - ✅ Sucesso (info + orderId)
@@ -62,6 +66,7 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 ## **Frontend (Next.js)**
 
 **Dashboard Admin HOSTMASTER:**
+
 - Menu sidebar fake com navegação (Home, Produtos, Pedidos, Analytics, Settings)
 - Seção principal: Lista de produtos com botão "Comprar [Nome]"
 - Clique = POST /v2/checkout → simulação de falha 50/50
@@ -69,7 +74,7 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 - Design simples mas profissional (Tailwind CSS)
 
 **Não precisa de:**
-- Autenticação real
+
 - Checkout real (só simula)
 - Integração com métodos de pagamento
 
@@ -79,17 +84,19 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 **Dados fictícios (Gaming/Informática):**
 
 **Produtos:**
+
 ```json
 [
-  { id: "MONITOR-240HZ", name: "Monitor 240Hz IPS", price: 1299.00 },
-  { id: "RTX-4060", name: "Placa de Vídeo RTX 4060", price: 1899.00 },
-  { id: "HEADSET-GAMER", name: "Headset Gamer Wireless", price: 449.00 },
-  { id: "TECLADO-RGB", name: "Teclado Mecânico RGB", price: 599.00 },
-  { id: "MOUSEPAD-XL", name: "Mousepad Extra Grande", price: 149.00 }
+  { "id": "MONITOR-240HZ", "name": "Monitor 240Hz IPS", "price": 1299.0 },
+  { "id": "RTX-4060", "name": "Placa de Vídeo RTX 4060", "price": 1899.0 },
+  { "id": "HEADSET-GAMER", "name": "Headset Gamer Wireless", "price": 449.0 },
+  { "id": "TECLADO-RGB", "name": "Teclado Mecânico RGB", "price": 599.0 },
+  { "id": "MOUSEPAD-XL", "name": "Mousepad Extra Grande", "price": 149.0 }
 ]
 ```
 
 **Usuários:**
+
 - gamer-pro@example.com
 - tech-enthusiast@test.com
 
@@ -100,6 +107,7 @@ Mesma coisa que /v1, mas isolada para teste não interferir na live.
 
 **Arquivo:** `docker-compose.yml` (raiz do monorepo)  
 **Serviços:**
+
 ```yaml
 services:
   postgres:
@@ -166,6 +174,4 @@ volumes:
 - ❌ Alertas/webhooks no código (é do Hermes)
 - ❌ Cron jobs hardcoded (Hermes cria dinamicamente)
 - ❌ Dados sensíveis (tudo fake/fictício)
-- ❌ Autenticação complexa (foco na demo, não em segurança)
 - ❌ Lógica de negócio pesada (simples + realista)
-

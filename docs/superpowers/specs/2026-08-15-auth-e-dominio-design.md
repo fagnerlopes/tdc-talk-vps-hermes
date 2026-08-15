@@ -1,6 +1,6 @@
 # Design — Separação loja/dashboard, autenticação e domínio próprio
 
-**Data:** 2026-08-15 · **Status:** aguardando revisão
+**Data:** 2026-08-15 · **Status:** aprovada
 
 ## Contexto
 
