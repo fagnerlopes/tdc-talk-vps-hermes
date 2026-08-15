@@ -9,11 +9,14 @@
 #   LOKI_URL=https://loki.hostmaster.fagnerlopes.dev \
 #   GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
 #   LOKI_USER=hermes LOKI_PASS='...' \
-#   ADMIN_EMAIL='...' ADMIN_PASSWORD='...' ./scripts/smoke.sh
+#   ADMIN_EMAIL='...' ADMIN_PASSWORD='...' \
+#   GRAFANA_PASSWORD='...' ./scripts/smoke.sh
 #
 # LOKI_USER/LOKI_PASS: em producao o Loki fica atras do proxy loki-auth. Sem eles
 #   as secoes 6 a 9 respondem 401 e a talk "cai" pelo motivo errado.
 # ADMIN_EMAIL/ADMIN_PASSWORD: sem eles as checagens de login sao PULADAS.
+# GRAFANA_PASSWORD: idem para o login do Grafana. As checagens de que o acesso
+#   anonimo esta FECHADO rodam sempre — elas nao precisam de credencial.
 # PROMTAIL_URL: nao ha dominio para o Promtail. Deixe em branco contra a VPS.
 #
 # O criterio de sucesso desta demo NAO e "o app funciona". E: as queries LogQL
@@ -33,6 +36,10 @@ LOKI_USER="${LOKI_USER:-}"
 LOKI_PASS="${LOKI_PASS:-}"
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+# O Grafana tambem tem login desde 15/08. O usuario e sempre `admin`: a CLI
+# reset-admin-password so mexe nesse, entao nao ha ganho em customizar.
+GRAFANA_USER="${GRAFANA_USER:-admin}"
+GRAFANA_PASSWORD="${GRAFANA_PASSWORD:-}"
 
 # Em producao o Loki esta atras de basic-auth (servico loki-auth). Array vazio
 # quando nao ha credencial, para o -u nao virar argumento solto.
@@ -232,8 +239,39 @@ code=$(curl -s -o /dev/null -w '%{http_code}' "${WEB_URL}/api/proxy/v2/health")
 code=$(curl -s -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/api/health")
 [ "$code" = "200" ] && ok "Grafana respondendo" || bad "Grafana = $code"
 
-ds=$(curl -s "${GRAFANA_URL}/api/datasources" | jq -r '.[0].type' 2>/dev/null)
-[ "$ds" = "loki" ] && ok "datasource Loki provisionado" || bad "datasource Loki ausente (got: ${ds:-nada})"
+# /api/health continua publico DE PROPOSITO — e um healthcheck, nao expoe dado.
+# O resto do Grafana nao pode mais responder sem login. Ate 15/08 respondia:
+# GF_AUTH_ANONYMOUS_ORG_ROLE era Admin, entao qualquer pessoa na internet podia
+# criar datasource e usar o proxy do Grafana para alcancar a rede interna da
+# stack — incluindo o Postgres com dev_user/dev123, que estao neste repositorio
+# publico. As duas checagens abaixo existem para isso nunca mais passar batido.
+code=$(curl -s -o /dev/null -w '%{http_code}' "${GRAFANA_URL}/api/datasources")
+[ "$code" = "401" ] \
+  && ok "Grafana anonimo barrado (/api/datasources = 401)" \
+  || bad "Grafana anonimo responde $code em /api/datasources — ACESSO ANONIMO ABERTO"
+
+code=$(curl -s -o /dev/null -w '%{http_code}' -u admin:admin "${GRAFANA_URL}/api/user")
+[ "$code" = "401" ] \
+  && ok "admin/admin recusado" \
+  || bad "admin/admin responde $code — O GRAFANA ESTA COM A SENHA DEFAULT"
+
+if [ -n "$GRAFANA_PASSWORD" ]; then
+  ds=$(curl -s -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" "${GRAFANA_URL}/api/datasources" \
+       | jq -r '.[0].type' 2>/dev/null)
+  [ "$ds" = "loki" ] \
+    && ok "datasource Loki provisionado (visto com login)" \
+    || bad "datasource Loki ausente (got: ${ds:-nada})"
+
+  # A causa do toast "Unauthorized": o frontend chama /api/user/* no load e a
+  # sessao anonima nao tinha usuario. Com login de verdade tem que dar 200.
+  code=$(curl -s -o /dev/null -w '%{http_code}' -u "${GRAFANA_USER}:${GRAFANA_PASSWORD}" \
+         "${GRAFANA_URL}/api/user")
+  [ "$code" = "200" ] \
+    && ok "login do Grafana funciona (/api/user = 200, sem toast)" \
+    || bad "login do Grafana falhou (/api/user = $code)"
+else
+  skip "login do Grafana — defina GRAFANA_PASSWORD"
+fi
 
 head_ "11. Autenticacao do painel"
 code=$(curl -s -o /dev/null -w '%{http_code}' "${WEB_URL}/login")

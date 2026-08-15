@@ -114,6 +114,8 @@ Não foi preciso criar nenhuma na mão: o Coolify parseia o `docker-compose.yml`
 | `SEED_ON_BOOT` | `true` |
 | `API_INTERNAL_URL` | `http://api:3001` |
 
+Três chaves fogem à regra e **precisam de valor na mão**, porque o default no Compose é vazio de propósito (segredo não entra em repositório público): `LOKI_BASIC_AUTH_B64`, `ADMIN_PASSWORD` e `GRAFANA_ADMIN_PASSWORD`.
+
 Ao criar env var pela API, **não** envie `is_build_time` — o Coolify 4.3.2 rejeita o campo com `"This field is not allowed."`.
 
 O build completo leva ~5 min (duas imagens Node). Na segunda às 18h deve ser só smoke test.
@@ -180,6 +182,56 @@ curl -sG -u "hermes:$SENHA" "$LOKI/loki/api/v1/label/job/values" | jq -c '.data'
 ```
 
 O marcador `teste-de-exposicao`, deixado pelo push anônimo original, saiu da janela padrão de consulta de labels e não aparece mais. Isso é esperado.
+
+## Login do Grafana — resolvido
+
+O Grafana subiu com `GF_AUTH_ANONYMOUS_ENABLED=true`, `GF_AUTH_ANONYMOUS_ORG_ROLE=Admin` e o formulário de login desligado. Na prática: **qualquer pessoa na internet era Admin** naquele Grafana. Admin cria datasource, e datasource novo usa o proxy do próprio Grafana para alcançar a rede interna da stack — inclusive o Postgres com `dev_user`/`dev123`, que estão neste repositório público. Era a mesma classe de furo que o `loki-auth` fechou, só que noutro domínio.
+
+Medido em 15/08, antes da correção:
+
+```bash
+G=https://grafana.hostmaster.fagnerlopes.dev
+curl -s -o /dev/null -w '%{http_code}\n' "$G/api/datasources"          # 200 — sem credencial nenhuma
+curl -s -o /dev/null -u admin:admin -w '%{http_code}\n' "$G/api/user"  # 200 — senha default valendo
+```
+
+O sintoma visível era outro e parecia cosmético: um toast **"Unauthorized"** ao abrir a UI. A causa é a mesma configuração — o frontend chama `/api/user/*` no load e a sessão anônima não tem usuário, então o backend responde 401. Corrigir o acesso corrigiu o toast.
+
+Hoje o acesso anônimo está desligado, o formulário de login está de volta, e o usuário é `admin` com a senha em `GRAFANA_ADMIN_PASSWORD` (env var no Coolify, nunca no repositório).
+
+### A pegadinha: `GF_SECURITY_ADMIN_PASSWORD` só vale no primeiro boot
+
+O Grafana cria o usuário `admin` quando o `grafana.db` ainda não existe. Depois disso **a variável é ignorada**. Como o volume `grafana_data` existe desde o primeiro deploy, definir a env var no Coolify e redeployar não mudaria nada — o deploy passaria, o container ficaria saudável, e a senha continuaria sendo `admin`. Falha silenciosa, do tipo que só aparece na hora errada.
+
+Medido na imagem `11.2.0`:
+
+| volume | `GF_SECURITY_ADMIN_PASSWORD` | login com ela | login com a antiga |
+|---|---|---|---|
+| novo | `senha-um` | 200 | — |
+| **o mesmo** | `senha-dois` | **401** | **200** |
+
+A correção mora em [monitoring/grafana-entrypoint.sh](monitoring/grafana-entrypoint.sh): quando o banco já existe, ele aplica a senha pela CLI antes de subir o servidor. A env var passa a valer sempre, sem apagar volume, e o comando é idempotente. Você verá `reset-admin-password` no log a cada boot — é esperado.
+
+O mesmo entrypoint **aborta** se a variável estiver ausente ou for literalmente `admin`, pelo mesmo motivo do `loki-auth`: melhor falhar alto que subir um Grafana aberto por engano.
+
+### Deploy desta mudança
+
+1. Criar a env var no Coolify (o Compose só extrai `${VAR:-default}` — a chave existe, mas nasce vazia):
+
+   ```bash
+   GRAFANA_ADMIN_PASSWORD=$(openssl rand -base64 24)
+   ```
+
+2. Redeploy. O `grafana` reconstrói (Dockerfile mudou).
+3. Conferir o log do container: `banco existente — aplicando GF_SECURITY_ADMIN_PASSWORD via CLI` seguido de `Admin password changed successfully`.
+4. Rodar o smoke — as três checagens novas estão na seção 10:
+
+   ```bash
+   GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
+   GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" ./scripts/smoke.sh
+   ```
+
+Se o container ficar em restart loop, leia o log: o entrypoint diz exatamente qual das duas condições falhou.
 
 ## Portas — todas fechadas
 

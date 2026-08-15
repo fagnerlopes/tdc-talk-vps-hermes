@@ -17,9 +17,13 @@ duas variáveis no terminal da aba 4 antes de começar.
 
 Abas 4 e 5 nunca aparecem, a menos que algo dê errado.
 
-**Faça login no painel (aba 5) ANTES de começar.** A sessão dura 12h. Descobrir que
-ela expirou no meio da talk custa caro, e a tela de login no telão não ajuda a
-narrativa.
+**Faça login no painel (aba 5) e no Grafana (aba 3) ANTES de começar.** A sessão do
+painel dura 12h; a do Grafana, 7 dias sem uso. Descobrir que expirou no meio da talk
+custa caro, e a tela de login no telão não ajuda a narrativa.
+
+O Grafana é `admin` + `GRAFANA_ADMIN_PASSWORD`. Ele deixou de aceitar acesso anônimo
+em 15/08 — antes disso qualquer pessoa na internet era Admin nele. Ver
+[DEPLOY.md](DEPLOY.md#login-do-grafana--resolvido).
 
 > ⚠️ **Não abra o `<details>` "Controles de demo" com a tela compartilhada.** Ele
 > mostra os botões de forçar falha — e conta para a plateia que a falha é encenada.
@@ -31,7 +35,8 @@ narrativa.
 API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
 LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
 LOKI_USER=hermes LOKI_PASS="$LOKI_PASS" \
-ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" ./scripts/smoke.sh \
+ADMIN_EMAIL="$ADMIN_EMAIL" ADMIN_PASSWORD="$ADMIN_PASSWORD" \
+GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" ./scripts/smoke.sh \
   && API_URL=https://api.hostmaster.fagnerlopes.dev ./scripts/reset-demo.sh
 ```
 

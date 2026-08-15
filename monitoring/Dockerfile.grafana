@@ -1,3 +1,17 @@
 # Provisioning viaja dentro da imagem — ver o comentario em Dockerfile.loki.
 FROM grafana/grafana:11.2.0
 COPY grafana/provisioning /etc/grafana/provisioning
+
+# A imagem oficial tem ENTRYPOINT ["/run.sh"] e roda como UID 472. Envolvemos o
+# /run.sh para validar a senha do admin antes de subir o servidor — ver o
+# cabecalho de grafana-entrypoint.sh.
+#
+# O `USER root` e so para poder dar chmod: sem ele o RUN roda como 472 e nao
+# escreve em /usr/local/bin. Voltamos para 472 logo em seguida, que e como a
+# imagem oficial roda.
+USER root
+COPY grafana-entrypoint.sh /usr/local/bin/grafana-entrypoint.sh
+RUN chmod +x /usr/local/bin/grafana-entrypoint.sh
+USER 472
+
+ENTRYPOINT ["/usr/local/bin/grafana-entrypoint.sh"]

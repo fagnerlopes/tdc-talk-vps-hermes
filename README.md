@@ -54,7 +54,7 @@ Levar ~30s. O container da API roda `prisma migrate deploy` e o seed idempotente
 | API | http://localhost:3001 | https://api.hostmaster.fagnerlopes.dev | endpoints `/v1` e `/v2`, sem autenticação |
 | Loki (cru) | http://localhost:3100 | — | sem domínio; só a rede interna fala com ele |
 | Loki (auth) | http://localhost:3101 | https://loki.hostmaster.fagnerlopes.dev | é aqui que o Hermes vai — **exige `-u`** |
-| Grafana | http://localhost:3300 | https://grafana.hostmaster.fagnerlopes.dev | Explore com datasource Loki, sem login |
+| Grafana | http://localhost:3300 | https://grafana.hostmaster.fagnerlopes.dev | Explore com datasource Loki — **exige login** (`admin` / `GRAFANA_ADMIN_PASSWORD`) |
 | Promtail | http://localhost:9080 | — | `/ready` para liveness, só de dentro |
 | Postgres | localhost:5432 | — | `dev_user` / `dev123` / `hermes_demo` |
 
@@ -84,7 +84,8 @@ Contra produção:
 API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
 LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
 LOKI_USER=hermes LOKI_PASS='<senha>' \
-ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' ./scripts/smoke.sh
+ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' \
+GRAFANA_PASSWORD='<senha>' ./scripts/smoke.sh
 ```
 
 As checagens que dependem de `docker compose` (contagem de containers, `/ready` do

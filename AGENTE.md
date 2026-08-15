@@ -27,7 +27,7 @@ Nada disso está codificado na aplicação. A aplicação só loga; toda a intel
 |---|---|---|
 | **API da aplicação** | `https://api.hostmaster.fagnerlopes.dev` | endpoints `/v1` e `/v2`, sem autenticação |
 | **Loki** | `https://loki.hostmaster.fagnerlopes.dev` | query de logs — **exige `-u "$LOKI_USER:$LOKI_PASS"`** |
-| **Grafana** | `https://grafana.hostmaster.fagnerlopes.dev` | Explore, sem login (uso humano, não do agente) |
+| **Grafana** | `https://grafana.hostmaster.fagnerlopes.dev` | Explore — **exige login** (uso humano, não do agente) |
 | **Telegram** | canal privado | recebe comandos e envia alertas |
 
 O **PostgreSQL não é mais acessível de fora** — a porta 5432 foi fechada, junto com as

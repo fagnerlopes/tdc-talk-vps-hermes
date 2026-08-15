@@ -12,7 +12,8 @@ Contra a VPS:
 API_URL=https://api.hostmaster.fagnerlopes.dev WEB_URL=https://hostmaster.fagnerlopes.dev \
 LOKI_URL=https://loki.hostmaster.fagnerlopes.dev GRAFANA_URL=https://grafana.hostmaster.fagnerlopes.dev \
 LOKI_USER=hermes LOKI_PASS='<senha>' \
-ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' ./scripts/smoke.sh
+ADMIN_EMAIL='<email>' ADMIN_PASSWORD='<senha>' \
+GRAFANA_PASSWORD='<senha>' ./scripts/smoke.sh
 ```
 
 O que segue abaixo é a versão manual, para quando você quiser olhar com os próprios olhos.
@@ -124,9 +125,18 @@ com a stack local de pé). De fora, troque por `https://api.hostmaster.fagnerlop
   # Deve conter: level, timestamp, correlationId, service, endpoint, productId, reason, message
   ```
 
-- [ ] Ver os logs com os olhos: **Grafana em https://grafana.hostmaster.fagnerlopes.dev** → Explore → datasource Loki → `{job="api"}`.
+- [ ] Ver os logs com os olhos: **Grafana em https://grafana.hostmaster.fagnerlopes.dev** → login como `admin` → Explore → datasource Loki → `{job="api"}`.
   **O Loki não tem UI**, e a raiz dele retorna 404 — isso é esperado. Para liveness use `/ready`.
   O Grafana fala com o Loki pela rede interna e **não** passa pelo basic-auth.
+
+- [ ] O Grafana **não** responde sem login:
+  ```bash
+  G=https://grafana.hostmaster.fagnerlopes.dev
+  curl -s -o /dev/null -w '%{http_code}\n' "$G/api/health"                    # 200 (healthcheck, público de propósito)
+  curl -s -o /dev/null -w '%{http_code}\n' "$G/api/datasources"               # 401
+  curl -s -o /dev/null -u admin:admin -w '%{http_code}\n' "$G/api/user"       # 401
+  curl -s -o /dev/null -u "admin:$SENHA" -w '%{http_code}\n' "$G/api/user"    # 200
+  ```
 
 ## Frontend
 

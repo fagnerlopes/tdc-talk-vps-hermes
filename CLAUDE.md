@@ -105,6 +105,13 @@ Restrições que continuam valendo, e que a auth não pode violar:
   observabilidade agnóstica. Se a auth encostar nesses endpoints, a demo morre.
 - **O Loki autentica**, mas por um proxy (`loki-auth`), não na aplicação. O Loki
   continua com `auth_enabled: false`; o Hermes só precisa de `curl -u`.
+- **O Grafana autentica** desde 15/08: acesso anônimo desligado, usuário `admin`,
+  senha em `GRAFANA_ADMIN_PASSWORD`. Antes ele era `anonymous + org_role: Admin`,
+  o que dava Admin a qualquer pessoa da internet — e era a causa do toast
+  "Unauthorized" na UI. **Não volte para acesso anônimo.** A senha é aplicada pelo
+  `monitoring/grafana-entrypoint.sh`, e não só pela env var: o Grafana honra
+  `GF_SECURITY_ADMIN_PASSWORD` apenas no primeiro boot de um volume novo, e o
+  `grafana_data` de produção já existe. Ver [DEPLOY.md](DEPLOY.md).
 - **A barreira é `app/dashboard/layout.tsx`** (`requireSession()`), **não** o
   `middleware.ts` — o middleware roda no Edge, não alcança o Prisma e faz só o
   atalho barato de cookie ausente. Um cookie forjado passa por ele.
@@ -174,6 +181,7 @@ Duas coisas que **não** devem ser desfeitas:
 - [x] Split loja/painel, controles de demo, noindex
 - [x] Autenticação de sessão no painel + gestão de admins
 - [x] `npm test` (vitest) cobrindo hash e sessão
+- [x] Login no Grafana; acesso anônimo com papel Admin removido
 
 ## **Importante: O Que NÃO Fazer**
 
