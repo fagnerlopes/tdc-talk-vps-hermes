@@ -15,13 +15,46 @@
 
 | Serviço | URL |
 |---|---|
-| Dashboard | http://vps70013.publiccloud.com.br:3000 |
-| API | http://vps70013.publiccloud.com.br:3001 |
-| Loki | http://vps70013.publiccloud.com.br:3100 |
-| Grafana | http://vps70013.publiccloud.com.br:3300 |
-| Promtail | http://vps70013.publiccloud.com.br:9080 |
+| Loja | https://hostmaster.fagnerlopes.dev |
+| Painel | https://hostmaster.fagnerlopes.dev/dashboard |
+| API | https://api.hostmaster.fagnerlopes.dev |
+| Loki | https://loki.hostmaster.fagnerlopes.dev |
+| Grafana | https://grafana.hostmaster.fagnerlopes.dev |
 
-O FQDN sslip que o Coolify gerou (`rye22uhkjq7j4qauczrb3jlo.177.153.35.27.sslip.io`) retorna **404**: o Traefik não sabe qual dos 6 serviços do compose atender. As portas publicadas funcionam e são o que o [AGENTE.md](AGENTE.md) usa. Para rotear o domínio ao dashboard, aponte-o ao serviço `web` na porta 3000 pela UI do Coolify.
+O Promtail **não tem domínio** — nada externo precisa dele. O `/ready` só é alcançável de dentro do host:
+
+```bash
+docker compose exec promtail wget -qO- localhost:9080/ready
+```
+
+## Domínios e TLS
+
+Quatro registros A em `fagnerlopes.dev` (DNS na Vercel) apontando para `177.153.35.27`. O apex continua servindo o site pessoal na Vercel e não foi tocado. Os certificados são emitidos pelo Traefik do Coolify via HTTP-01, e as 80/443 já estavam abertas.
+
+O mapeamento vive no campo `docker_compose_domains` da aplicação:
+
+```bash
+api -X PATCH "$COOLIFY/api/v1/applications/$APP" -d '{
+  "docker_compose_domains": {
+    "web":     { "name": "web",     "domain": "https://hostmaster.fagnerlopes.dev:3000" },
+    "api":     { "name": "api",     "domain": "https://api.hostmaster.fagnerlopes.dev:3001" },
+    "loki":    { "name": "loki",    "domain": "https://loki.hostmaster.fagnerlopes.dev:3100" },
+    "grafana": { "name": "grafana", "domain": "https://grafana.hostmaster.fagnerlopes.dev:3000" }
+  }
+}'
+```
+
+Três detalhes que custam tempo se você não souber:
+
+- **A porta no fim de cada URL é a porta interna do container, não a pública.** É assim que o Traefik sabe para onde rotear. Por isso o Grafana é `:3000` (o que ele escuta) e não `:3300` (o que o compose publicava no host).
+- **O campo `name` é obrigatório** e repete a chave do serviço. Sem ele o Coolify 4.3.2 responde `Validation failed` com `docker_compose_domains.web.name field is required`. Sucesso devolve só `{"uuid":"..."}`.
+- **O campo volta da API como string JSON**, não como objeto. Para conferir: `api "$COOLIFY/api/v1/applications/$APP" | jq -r '.docker_compose_domains' | jq '.'`
+
+Existe um bug conhecido ([#4326](https://github.com/coollabsio/coolify/issues/4326)) em que o PATCH responde sucesso e o domínio não persiste. Sempre leia de volta antes de disparar o deploy.
+
+**`/ready` do Loki responde 503 logo depois do deploy** — `Ingester not ready: waiting for 15s after being ready`. É a carência de partida do próprio Loki, não problema de roteamento: a resposta é idêntica pelo domínio e pela porta crua, e a API de query já funciona antes disso. Espere e repita.
+
+O FQDN sslip que o Coolify gerou (`rye22uhkjq7j4qauczrb3jlo.177.153.35.27.sslip.io`) continua retornando **404** e pode ser ignorado.
 
 ## Refazer o deploy pela API REST
 

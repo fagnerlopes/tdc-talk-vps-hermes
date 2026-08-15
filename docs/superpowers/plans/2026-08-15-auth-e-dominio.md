@@ -151,23 +151,31 @@ Esperado: os quatro devolvem `177.153.35.27`. Se algum não resolver, **pare** �
 ```bash
 api -X PATCH "$COOLIFY/api/v1/applications/$APP" -d '{
   "docker_compose_domains": {
-    "web":     { "domain": "https://hostmaster.fagnerlopes.dev:3000" },
-    "api":     { "domain": "https://api.hostmaster.fagnerlopes.dev:3001" },
-    "loki":    { "domain": "https://loki.hostmaster.fagnerlopes.dev:3100" },
-    "grafana": { "domain": "https://grafana.hostmaster.fagnerlopes.dev:3000" }
+    "web":     { "name": "web",     "domain": "https://hostmaster.fagnerlopes.dev:3000" },
+    "api":     { "name": "api",     "domain": "https://api.hostmaster.fagnerlopes.dev:3001" },
+    "loki":    { "name": "loki",    "domain": "https://loki.hostmaster.fagnerlopes.dev:3100" },
+    "grafana": { "name": "grafana", "domain": "https://grafana.hostmaster.fagnerlopes.dev:3000" }
   }
 }' | jq '.'
 ```
+
+**O campo `name` é obrigatório e repete a chave do serviço.** Sem ele o Coolify 4.3.2
+responde `{"message":"Validation failed.","errors":{"docker_compose_domains.web.name":
+["The docker_compose_domains.web.name field is required."]}}`. Sucesso devolve só
+`{"uuid":"..."}`.
 
 - [ ] **Step 4: Verificar que persistiu — este passo não é opcional**
 
 Existe um bug conhecido no Coolify ([#4326](https://github.com/coollabsio/coolify/issues/4326)) em que o PATCH responde sucesso e o domínio não persiste. Leia de volta:
 
 ```bash
-api "$COOLIFY/api/v1/applications/$APP" | jq '.docker_compose_domains'
+api "$COOLIFY/api/v1/applications/$APP" | jq -r '.docker_compose_domains' | jq '.'
 ```
 
-Esperado: o mesmo objeto de quatro chaves do Step 3. Se vier `null` ou faltando chave, **não siga** — configure pela UI do Coolify (`http://vps70013.publiccloud.com.br:8000` → aplicação `hostmaster-demo` → aba de cada serviço do compose → campo **Domains**) e repita este Step.
+O campo volta como **string JSON**, não como objeto — por isso o `jq -r` antes do `jq`.
+
+Esperado: as quatro chaves com os domínios do Step 3 (o `name` não é ecoado de volta,
+só o `domain`). Se vier `null` ou faltando chave, **não siga** — configure pela UI do Coolify (`http://vps70013.publiccloud.com.br:8000` → aplicação `hostmaster-demo` → aba de cada serviço do compose → campo **Domains**) e repita este Step.
 
 - [ ] **Step 5: Disparar o deploy**
 
