@@ -70,23 +70,34 @@ services:
     volumes:
       # volume NOMEADO, nao bind mount — ver comentario em loki-config.yaml
       - loki_data:/loki
-    # Basic-auth NO TRAEFIK, nao na aplicacao: o Loki continua com
-    # auth_enabled: false e o Hermes so precisa de `curl -u`.
-    #
-    # Os dois caminhos INTERNOS nao passam pelo Traefik e NAO sao afetados:
-    #   promtail -> http://loki:3100 (push)
-    #   grafana  -> http://loki:3100 (datasource)
-    # Se o Grafana parar de ver dados depois disto, o problema e outro.
-    #
-    # O nome do roteador e gerado pelo Coolify a partir do dominio, e o
-    # `middlewares=gzip` tambem e dele — por isso `gzip,loki-auth`, e nao so
-    # `loki-auth`: sobrescrever o valor derrubaria a compressao. Reconfira com:
-    #   api "$COOLIFY/api/v1/applications/$APP" | jq -r '.docker_compose' \
-    #     | sed -n '/^  loki:/,/^  [a-z]/p' | grep traefik
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.middlewares.loki-auth.basicauth.users=${LOKI_BASIC_AUTH}"
-      - "traefik.http.routers.https-0-rye22uhkjq7j4qauczrb3jlo-loki-e64c.middlewares=gzip,loki-auth"
+  # Basic-auth para quem vem DE FORA. O dominio publico
+  # loki.hostmaster.fagnerlopes.dev aponta para ESTE servico, nao para o loki.
+  #
+  # POR QUE NAO UM MIDDLEWARE basicauth NO TRAEFIK: o Coolify escapa `${VAR}` em
+  # `labels:` para `$${VAR}` — ele substitui variavel em `environment:`, mas nao
+  # em `labels:`. O middleware recebia a string literal `${LOKI_BASIC_AUTH}` como
+  # lista de usuarios, o Traefik invalidava o roteador e tudo virava 503 "no
+  # available server". Escrever o hash direto no compose nao e opcao: o
+  # repositorio e publico. Ver monitoring/loki-auth.conf.
+  #
+  # Os dois caminhos INTERNOS continuam falando com o loki direto e NAO passam
+  # por aqui: promtail -> http://loki:3100 (push) e grafana -> http://loki:3100
+  # (datasource). Se o Grafana parar de ver dados, o problema e outro.
+  loki-auth:
+    build:
+      context: ./monitoring
+      dockerfile: Dockerfile.lokiauth
+    restart: unless-stopped
+    depends_on:
+      - loki
+    environment:
+      # Linha htpasswd (`usuario:$apr1$...`) em BASE64. Base64 porque o `$` do
+      # hash nao sobrevive a interpolacao do Compose — ver o comentario em
+      # monitoring/loki-auth-htpasswd.sh. Sem a variavel o container aborta de
+      # proposito, para o Loki nunca ficar aberto por engano — a checagem vive no
+      # entrypoint, nao no `:?` do compose, porque o parser do Coolify so lida
+      # bem com a forma `${VAR:-default}`.
+      LOKI_BASIC_AUTH_B64: ${LOKI_BASIC_AUTH_B64:-}
 
   promtail:
     build:

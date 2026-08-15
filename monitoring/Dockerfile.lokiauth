@@ -1,0 +1,16 @@
+# Proxy de basic-auth na frente do Loki.
+#
+# Mesmo motivo dos outros Dockerfiles desta pasta: o config vai DENTRO da imagem,
+# nao por bind mount relativo. O Coolify reescreve binds relativos para um caminho
+# do host onde os arquivos nao estao, o Docker cria um diretorio vazio no lugar do
+# arquivo e o container morre com "not a directory".
+FROM nginx:1.27-alpine
+
+COPY loki-auth.conf /etc/nginx/conf.d/default.conf
+
+# A imagem oficial do nginx roda /docker-entrypoint.d/*.sh, em ordem alfabetica,
+# antes de subir o servidor. O 40- garante que o .htpasswd exista antes disso.
+COPY loki-auth-htpasswd.sh /docker-entrypoint.d/40-loki-auth-htpasswd.sh
+RUN chmod +x /docker-entrypoint.d/40-loki-auth-htpasswd.sh
+
+EXPOSE 3100
