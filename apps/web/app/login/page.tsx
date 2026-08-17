@@ -23,7 +23,7 @@ export default async function Login({
           <span className="grid h-9 w-9 place-items-center rounded bg-amber-500 font-mono text-lg font-bold text-slate-950">
             H
           </span>
-          <span className="text-lg font-semibold tracking-tight text-slate-100">HOSTMASTER</span>
+          <span className="text-lg font-semibold tracking-tight text-slate-100">Hermes Informática</span>
         </div>
 
         <h1 className="text-2xl font-semibold tracking-tight text-slate-50">Acesso ao painel</h1>

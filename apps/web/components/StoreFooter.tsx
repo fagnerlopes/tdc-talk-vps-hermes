@@ -25,7 +25,7 @@ export function StoreFooter() {
             <span className="grid h-7 w-7 place-items-center rounded bg-amber-500 font-mono text-sm font-black text-slate-950">
               H
             </span>
-            <span className="text-sm font-semibold text-slate-400">HOSTMASTER</span>
+            <span className="text-sm font-semibold text-slate-400">Hermes Informática</span>
           </div>
           <p className="text-center text-xs text-slate-600 leading-relaxed">
             Loja ficticia para demonstracao — TDC 2026

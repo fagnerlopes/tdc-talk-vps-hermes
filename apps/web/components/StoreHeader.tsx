@@ -53,7 +53,7 @@ export function StoreHeader() {
             H
           </span>
           <div className="hidden sm:block">
-            <span className="text-xl font-bold tracking-tight text-white">HOSTMASTER</span>
+            <span className="text-xl font-bold tracking-tight text-white">Hermes Informática</span>
             <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Gaming & Informatica</p>
           </div>
         </Link>
