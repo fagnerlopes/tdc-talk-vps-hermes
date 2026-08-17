@@ -1,7 +1,37 @@
 @import 'tailwindcss';
 
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Light mode (default when .dark is removed) ── */
 :root {
+  color-scheme: light;
+  --store-bg: #f8fafc;
+  --store-bg-alt: #f1f5f9;
+  --store-bg-card: #ffffff;
+  --store-bg-header: rgba(248, 250, 252, 0.95);
+  --store-bg-utility: #e2e8f0;
+  --store-text: #0f172a;
+  --store-text-secondary: #475569;
+  --store-text-muted: #94a3b8;
+  --store-border: #e2e8f0;
+  --store-border-subtle: #f1f5f9;
+  --store-input-bg: #f1f5f9;
+}
+
+/* ── Dark mode ── */
+.dark {
   color-scheme: dark;
+  --store-bg: #0b1120;
+  --store-bg-alt: #060d1b;
+  --store-bg-card: #0f1729;
+  --store-bg-header: rgba(11, 17, 32, 0.95);
+  --store-bg-utility: #060d1b;
+  --store-text: #e2e8f0;
+  --store-text-secondary: #94a3b8;
+  --store-text-muted: #64748b;
+  --store-border: #1e293b;
+  --store-border-subtle: rgba(30, 41, 59, 0.6);
+  --store-input-bg: rgba(15, 23, 42, 0.8);
 }
 
 html,
@@ -10,8 +40,8 @@ body {
 }
 
 body {
-  background-color: #0b1120;
-  color: #e2e8f0;
+  background-color: var(--store-bg);
+  color: var(--store-text);
   font-family:
     ui-sans-serif,
     system-ui,
@@ -22,6 +52,7 @@ body {
     Arial,
     sans-serif;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }
 
 code,
